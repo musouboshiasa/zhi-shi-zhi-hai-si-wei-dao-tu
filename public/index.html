@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知识之海 - 知识点管理</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+  <!-- 顶部导航栏 -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <span class="app-logo">🌊</span>
+      <span class="app-title">知识之海</span>
+    </div>
+    <div class="topbar-center">
+      <input type="text" id="global-search" placeholder="搜索知识点（编号或名称）..." autocomplete="off">
+      <div id="search-results" class="search-dropdown hidden"></div>
+    </div>
+    <div class="topbar-right">
+      <button id="btn-new-kp" class="top-btn" title="新建知识点">＋ 新建</button>
+      <button id="btn-images" class="top-btn" title="图片管理">🖼 图片</button>
+      <button id="btn-settings-toggle" class="top-btn settings-btn" title="设置">⚙</button>
+    </div>
+  </header>
+
+  <!-- 主工作区 -->
+  <div id="workspace">
+    <!-- 首页 -->
+    <div id="home-page" class="page active">
+      <div class="home-container">
+        <div class="home-hero">
+          <div class="home-logo-large">🌊</div>
+          <h1>知识之海</h1>
+          <p class="home-subtitle">你的个人知识海洋</p>
+        </div>
+        <div class="home-search-area">
+          <input type="text" id="home-search" placeholder="输入编号或名称搜索知识点..." autocomplete="off">
+          <div id="home-search-results" class="search-dropdown hidden"></div>
+        </div>
+        <div class="home-signature" id="home-signature">
+          <span id="signature-text"></span>
+        </div>
+        <div class="home-actions">
+          <button id="btn-home-new" class="btn-primary">＋ 创建新知识点</button>
+          <button id="btn-home-images" class="btn-secondary">🖼 图片管理</button>
+        </div>
+        <div class="home-recent">
+          <h3>知识点列表</h3>
+          <input type="text" id="list-search" placeholder="在列表中搜索..." class="list-search-input">
+          <div id="recent-list" class="recent-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 知识点查看/编辑页 -->
+    <div id="kp-page" class="page">
+      <div class="kp-header">
+        <button id="btn-back" class="back-btn">← 返回</button>
+        <div class="kp-title-area">
+          <span class="kp-number" id="kp-number-display"></span>
+          <h2 class="kp-name" id="kp-name-display"></h2>
+        </div>
+        <div class="kp-header-actions">
+          <button id="btn-mindmap" class="action-btn">🧠 思维导图</button>
+          <button id="btn-edit" class="action-btn">✏ 修改</button>
+          <button id="btn-delete-kp" class="action-btn danger">🗑 删除</button>
+        </div>
+      </div>
+      <div class="kp-body">
+        <!-- 正文区域 -->
+        <div class="kp-content-area" id="kp-content-rendered"></div>
+        <!-- 侧边栏 -->
+        <div class="kp-sidebar">
+          <div class="kp-related-section">
+            <h3>🔗 前相关知识</h3>
+            <div id="prev-related-list"></div>
+          </div>
+          <div class="kp-related-section">
+            <h3>🔗 后相关知识</h3>
+            <div id="next-related-list"></div>
+          </div>
+        </div>
+      </div>
+      <!-- 思维导图选择气泡 -->
+      <div id="mindmap-mode-modal" class="modal hidden">
+        <div class="modal-content">
+          <h3>选择思维导图模式</h3>
+          <div class="mode-options">
+            <button class="mode-btn" data-mode="forward">📤 后延式<br><small>以后相关为方向展开</small></button>
+            <button class="mode-btn" data-mode="surrounding">🔄 周围式<br><small>显示前后相关知识点</small></button>
+            <button class="mode-btn" data-mode="free">🎛 自由式<br><small>自定义前后层数</small></button>
+          </div>
+          <div id="free-mode-controls" class="hidden">
+            <label>前相关层数: <input type="number" id="free-backward-depth" min="1" value="2"></label>
+            <label>后相关层数: <input type="number" id="free-forward-depth" min="1" value="2"></label>
+          </div>
+          <button id="btn-mindmap-cancel" class="btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 知识点编辑页 -->
+    <div id="kp-edit-page" class="page">
+      <div class="kp-header">
+        <button id="btn-edit-back" class="back-btn">← 返回查看</button>
+        <div class="kp-title-area">
+          <input type="text" id="edit-number" placeholder="知识点编号" class="title-input">
+          <input type="text" id="edit-name" placeholder="知识点名称" class="title-input">
+        </div>
+        <div class="kp-header-actions">
+          <button id="btn-save" class="action-btn primary">💾 保存</button>
+        </div>
+      </div>
+      <div class="kp-edit-body">
+        <div class="edit-main">
+          <div class="edit-section">
+            <h3>正文（Markdown）</h3>
+            <textarea id="edit-content" placeholder="在此编写知识点正文（支持Markdown格式）..."></textarea>
+          </div>
+          <div class="edit-section">
+            <h3>预览</h3>
+            <div id="edit-preview" class="markdown-preview"></div>
+          </div>
+          <div class="edit-toolbar">
+            <button id="btn-insert-image" class="tool-btn">🖼 插入图片</button>
+            <div id="image-insert-modal" class="modal hidden">
+              <div class="modal-content">
+                <h3>插入图片</h3>
+                <button id="btn-upload-img" class="btn-primary">📤 上传</button>
+                <div class="img-search-area">
+                  <input type="text" id="img-search-input" placeholder="搜索图片...">
+                  <div id="img-search-results" class="img-grid"></div>
+                </div>
+                <button id="btn-img-insert-cancel" class="btn-secondary">关闭</button>
+              </div>
+            </div>
+            <!-- 上传图片弹窗 -->
+            <div id="upload-modal" class="modal hidden">
+              <div class="modal-content">
+                <h3>上传图片</h3>
+                <input type="text" id="upload-img-number" placeholder="图片编号">
+                <input type="text" id="upload-img-name" placeholder="图片名称">
+                <input type="file" id="upload-img-file" accept="image/*">
+                <button id="btn-upload-confirm" class="btn-primary">确认上传</button>
+                <button id="btn-upload-cancel" class="btn-secondary">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="edit-sidebar">
+          <div class="edit-related">
+            <h3>🔗 前相关知识</h3>
+            <div id="edit-prev-related"></div>
+            <div class="add-related-area">
+              <input type="text" id="add-prev-search" placeholder="搜索或输入编号添加...">
+              <div id="prev-search-results" class="search-dropdown-small hidden"></div>
+            </div>
+          </div>
+          <div class="edit-related">
+            <h3>🔗 后相关知识</h3>
+            <div id="edit-next-related"></div>
+            <div class="add-related-area">
+              <input type="text" id="add-next-search" placeholder="搜索或输入编号添加...">
+              <div id="next-search-results" class="search-dropdown-small hidden"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 思维导图页 -->
+    <div id="mindmap-page" class="page">
+      <div class="mindmap-header">
+        <button id="btn-mindmap-back" class="back-btn">← 返回</button>
+        <span id="mindmap-title"></span>
+        <div class="mindmap-controls">
+          <button id="btn-red-pen" class="pen-btn pen-red" title="红色画笔">🔴</button>
+          <button id="btn-green-pen" class="pen-btn pen-green" title="绿色画笔">🟢</button>
+          <button id="btn-blue-pen" class="pen-btn pen-blue active" title="蓝色画笔">🔵</button>
+          <button id="btn-clear-pen" class="tool-btn" title="清除画笔">🧹</button>
+          <button id="btn-zoom-in" class="tool-btn">🔍+</button>
+          <button id="btn-zoom-out" class="tool-btn">🔍-</button>
+          <button id="btn-zoom-reset" class="tool-btn">↺</button>
+        </div>
+      </div>
+      <div id="mindmap-canvas-container">
+        <canvas id="mindmap-canvas"></canvas>
+      </div>
+      <!-- 知识点气泡 -->
+      <div id="kp-bubble" class="bubble hidden">
+        <div class="bubble-number"></div>
+        <div class="bubble-name"></div>
+        <div class="bubble-preview"></div>
+        <button class="bubble-jump btn-primary btn-sm">跳转查看</button>
+      </div>
+    </div>
+
+    <!-- 图片管理页 -->
+    <div id="images-page" class="page">
+      <div class="modal-header">
+        <button id="btn-images-back" class="back-btn">← 返回</button>
+        <h1>🖼 图片管理</h1>
+      </div>
+      <div class="images-toolbar">
+        <input type="text" id="img-manager-search" placeholder="搜索图片编号或名称...">
+        <button id="btn-img-upload-manager" class="action-btn">📤 上传</button>
+        <button id="btn-img-edit" class="action-btn">✏ 修改</button>
+        <button id="btn-img-delete" class="action-btn danger">🗑 删除</button>
+        <button id="btn-img-multiselect" class="action-btn">☑ 多选</button>
+      </div>
+      <div id="img-manager-grid" class="img-manager-grid"></div>
+      <div id="img-preview-overlay" class="modal hidden">
+        <div class="modal-content img-preview-content">
+          <img id="img-full-preview" src="" alt="图片预览">
+          <button id="btn-img-preview-close" class="btn-secondary">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 设置面板 -->
+    <div id="settings-panel" class="modal hidden">
+      <div class="modal-content settings-content">
+        <h2>⚙ 设置</h2>
+        <div class="settings-section">
+          <h3>个人信息</h3>
+          <label>电子签名: <input type="text" id="setting-signature" placeholder="输入你的电子签名"></label>
+          <label>签名字体:
+            <select id="setting-font">
+              <option value="sans-serif">默认 (Sans-serif)</option>
+              <option value="serif">衬线体 (Serif)</option>
+              <option value="monospace">等宽字体 (Monospace)</option>
+              <option value="cursive">手写体 (Cursive)</option>
+              <option value="'KaiTi', serif">楷体</option>
+              <option value="'SimSun', serif">宋体</option>
+              <option value="'Microsoft YaHei', sans-serif">微软雅黑</option>
+            </select>
+          </label>
+        </div>
+        <div class="settings-section">
+          <h3>显示设置</h3>
+          <label>刷新率:
+            <select id="setting-refresh">
+              <option value="30">30 Hz</option>
+              <option value="60" selected>60 Hz</option>
+              <option value="120">120 Hz</option>
+              <option value="144">144 Hz</option>
+            </select>
+          </label>
+        </div>
+        <div class="settings-section">
+          <h3>🌐 云端同步设置</h3>
+          <label>服务器域名: <input type="text" id="cloud-domain" placeholder="https://your-server.com"></label>
+          <label>账号: <input type="text" id="cloud-username" placeholder="输入账号"></label>
+          <label>密码: <input type="password" id="cloud-password" placeholder="输入密码"></label>
+          <label><input type="checkbox" id="cloud-save-cred"> 记住登录信息</label>
+          <div class="cloud-actions">
+            <button id="btn-cloud-upload" class="btn-primary">📤 上传到云端</button>
+            <button id="btn-cloud-download" class="btn-primary">📥 从云端下载</button>
+          </div>
+          <div id="cloud-status" class="cloud-status"></div>
+        </div>
+        <div class="settings-actions">
+          <button id="btn-settings-close" class="btn-secondary">关闭</button>
+          <button id="btn-exit" class="btn-danger">退出程序</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 删除确认气泡 -->
+    <div id="confirm-modal" class="modal hidden">
+      <div class="modal-content confirm-content">
+        <p id="confirm-message"></p>
+        <div class="confirm-actions">
+          <button id="btn-confirm-yes" class="btn-danger">确认</button>
+          <button id="btn-confirm-no" class="btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 提示消息 -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/mindmap.js"></script>
+</body>
+</html>
