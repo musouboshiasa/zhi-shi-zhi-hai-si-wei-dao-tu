@@ -1,13 +1,17 @@
 // ========== The Sea of Knowledge - Main App ==========
 
+// 子路径适配：把绝对路径 /api/xxx 转为相对路径 api/xxx，
+// 配合 <base> 标签即可在任意子路径（如 /ruanjian/）下部署
+const resolvePath = (url) => url.replace(/^\/api\//, 'api/');
+
 const API = {
   async get(url) {
-    const res = await fetch(url);
+    const res = await fetch(resolvePath(url));
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   async post(url, data) {
-    const res = await fetch(url, {
+    const res = await fetch(resolvePath(url), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -16,7 +20,7 @@ const API = {
     return res.json();
   },
   async put(url, data) {
-    const res = await fetch(url, {
+    const res = await fetch(resolvePath(url), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -25,12 +29,12 @@ const API = {
     return res.json();
   },
   async del(url) {
-    const res = await fetch(url, { method: 'DELETE' });
+    const res = await fetch(resolvePath(url), { method: 'DELETE' });
     if (!res.ok) throw new Error((await res.json()).error || 'Request failed');
     return res.json();
   },
   async upload(url, formData) {
-    const res = await fetch(url, { method: 'POST', body: formData });
+    const res = await fetch(resolvePath(url), { method: 'POST', body: formData });
     if (!res.ok) throw new Error((await res.json()).error || 'Upload failed');
     return res.json();
   }
@@ -450,7 +454,7 @@ async function loadImageManager(searchQuery = '') {
     } else {
       grid.innerHTML = list.map(img => `
         <div class="img-card" data-filename="${escHtml(img.filename)}" data-number="${escHtml(img.number || '')}" data-name="${escHtml(img.name || '')}">
-          <img class="img-card-thumb" src="/api/images/file/${encodeURIComponent(img.filename)}" alt="${escHtml(img.name)}" loading="lazy"
+          <img class="img-card-thumb" src="api/images/file/${encodeURIComponent(img.filename)}" alt="${escHtml(img.name)}" loading="lazy"
             onerror="this.parentElement.querySelector('.img-card-thumb').textContent='🖼'">
           <div class="img-card-info">
             <div class="img-card-number">${escHtml(img.number || '-')}</div>
@@ -472,7 +476,7 @@ async function loadImageManager(searchQuery = '') {
         });
         card.addEventListener('dblclick', () => {
           const img = document.getElementById('img-full-preview');
-          img.src = `/api/images/file/${encodeURIComponent(card.dataset.filename)}`;
+          img.src = `api/images/file/${encodeURIComponent(card.dataset.filename)}`;
           document.getElementById('img-preview-overlay').classList.remove('hidden');
         });
       });
@@ -512,7 +516,7 @@ async function searchInsertImages(query) {
     const results = document.getElementById('img-search-results');
     results.innerHTML = list.map(img => `
       <div class="img-grid-item" data-filename="${escHtml(img.filename)}" data-number="${escHtml(img.number || '')}" data-name="${escHtml(img.name || '')}">
-        <img src="/api/images/file/${encodeURIComponent(img.filename)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 80%22><text y=%2250%22 x=%2250%25%22 text-anchor=%22middle%22>🖼</text></svg>'">
+        <img src="api/images/file/${encodeURIComponent(img.filename)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 80%22><text y=%2250%22 x=%2250%25%22 text-anchor=%22middle%22>🖼</text></svg>'">
         <div class="img-grid-label">${escHtml(img.number || '')} ${escHtml((img.name || '').substring(0, 8))}</div>
       </div>
     `).join('');
@@ -538,7 +542,7 @@ function confirmImageInsert() {
   const name = results._selectedName || results._selectedFilename || '';
   const filename = results._selectedFilename || '';
   // Use API route to avoid URL encoding issues with Chinese filenames
-  const mdRef = `![${name}](/api/images/file/${encodeURIComponent(filename)})`;
+  const mdRef = `![${name}](api/images/file/${encodeURIComponent(filename)})`;
   navigator.clipboard.writeText(mdRef).then(() => {
     showToast('图片引用已复制到剪贴板，请粘贴到正文中');
     document.getElementById('image-insert-modal').classList.add('hidden');

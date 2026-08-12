@@ -38,6 +38,14 @@ node server.js
 
 或双击运行 `启动软件.bat`
 
+### 部署到服务器（网页版）
+
+支持两种方式：
+- **独立域名部署**：`https://musouboshiasa.com`（见 `deploy/nginx.conf`）
+- **子路径部署**：与现有网站/网盘共存，`https://musouboshiasa.com/ruanjian/`（见 `deploy/nginx-子路径.conf` 和 `deploy/服务器部署指南.md`）
+
+详细步骤见 `deploy/服务器部署指南.md`
+
 ## 📖 使用指南
 
 ### 创建知识点

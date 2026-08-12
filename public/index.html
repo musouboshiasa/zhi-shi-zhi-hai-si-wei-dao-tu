@@ -4,7 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>知识之海 - 知识点管理</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <script>
+    // 自动适配子路径部署（如 https://musouboshiasa.com/ruanjian/）
+    // 动态计算当前目录作为 base，所有相对资源路径都会正确解析
+    (function () {
+      var p = location.pathname;
+      var dir = p.substring(0, p.lastIndexOf('/') + 1);
+      if (dir === '') dir = '/';
+      document.write('<base href="' + dir + '">');
+    })();
+  </script>
+  <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -286,7 +296,7 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="/js/app.js"></script>
-  <script src="/js/mindmap.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/mindmap.js"></script>
 </body>
 </html>
