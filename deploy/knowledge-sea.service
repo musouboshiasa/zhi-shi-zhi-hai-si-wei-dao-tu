@@ -1,0 +1,16 @@
+[Unit]
+Description=知识之海 Knowledge Sea
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/knowledge-sea
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+[Install]
+WantedBy=multi-user.target

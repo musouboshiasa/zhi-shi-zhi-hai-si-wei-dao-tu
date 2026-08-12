@@ -912,3 +912,58 @@ body {
 #kp-content-rendered .katex {
   font-size: 1.05em;
 }
+
+/* ========== Responsive (Tablet & Mobile) ========== */
+@media (max-width: 900px) {
+  #topbar { padding: 0 10px; height: 50px; }
+  .app-title { font-size: 14px; }
+  .app-logo { font-size: 20px; }
+  .topbar-center { margin: 0 10px; }
+  .top-btn { padding: 0 8px; font-size: 12px; }
+  #workspace { height: calc(100vh - 50px); }
+  #home-page { padding: 20px 12px; }
+  .home-hero h1 { font-size: 28px; }
+  .kp-header { flex-wrap: wrap; padding: 10px 12px; }
+  .kp-body { padding: 12px; }
+  .mindmap-header { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
+  .mindmap-controls { margin-left: 0; width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .modal-content { width: 92%; max-height: 85vh; margin: 8vh auto 0; padding: 16px; }
+  .kp-edit-body { padding: 12px; }
+}
+
+@media (max-width: 600px) {
+  #topbar { padding: 0 8px; }
+  .topbar-left .app-title { display: none; }
+  .topbar-left { gap: 4px; }
+  .top-btn { height: 32px; padding: 0 6px; font-size: 11px; }
+  .settings-btn { font-size: 16px; width: 32px; }
+  .topbar-center { margin: 0 6px; }
+  #global-search { height: 32px; font-size: 12px; padding: 0 10px; }
+  .home-container { max-width: 100%; }
+  .home-hero h1 { font-size: 24px; }
+  .home-subtitle { font-size: 14px; }
+  .home-search-area input { font-size: 14px; height: 40px; }
+  .kp-title-area { flex-direction: column; align-items: stretch; gap: 6px; }
+  .kp-title-area .title-input { font-size: 15px; }
+  .kp-header-actions { flex-wrap: wrap; }
+  .related-item { font-size: 13px; padding: 8px; }
+  .mindmap-header #mindmap-title { font-size: 13px; }
+  .mindmap-controls button { font-size: 11px; padding: 4px 8px; }
+  #mindmap-mode-modal .modal-content { width: 94%; }
+  .mode-options { flex-direction: column; }
+  .mode-btn { width: 100%; padding: 10px; }
+  .edit-preview { min-height: 200px; }
+  .modal-content h3 { font-size: 16px; }
+  .img-grid { grid-template-columns: repeat(2, 1fr); }
+  .bubble { width: 200px; }
+}
+
+@media (max-width: 480px) {
+  #global-search { display: none; }
+  .topbar-center { display: none; }
+  .topbar-right { margin-left: auto; }
+  .img-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .btn-primary, .btn-secondary { padding: 8px 12px; font-size: 13px; }
+  .home-actions { flex-direction: column; gap: 10px; }
+  .home-actions .btn-primary, .home-actions .btn-secondary { width: 100%; }
+}

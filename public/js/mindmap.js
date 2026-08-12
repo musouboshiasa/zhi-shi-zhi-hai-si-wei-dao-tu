@@ -60,6 +60,24 @@ class MindMapRenderer {
     this.canvas.addEventListener('click', (e) => this.onClick(e));
     this.canvas.addEventListener('dblclick', (e) => this.onDblClick(e));
 
+    // Touch events (mobile/tablet) — forward to mouse handlers
+    this.canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      const me = new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY, bubbles: true });
+      this.canvas.dispatchEvent(me);
+    }, { passive: false });
+    this.canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      const me = new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY, bubbles: true });
+      this.canvas.dispatchEvent(me);
+    }, { passive: false });
+    this.canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      this.canvas.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    }, { passive: false });
+
     // Set default cursor
     this.canvas.style.cursor = 'grab';
 
