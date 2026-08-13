@@ -385,6 +385,10 @@ function updateImageIndex() {
 // Initialize
 ensureDir(STORAGE_DIR);
 ensureDir(IMAGE_DIR);
+ensureDir(CLOUD_TRANSFER_DIR);
+ensureDir(path.join(CLOUD_TRANSFER_DIR, '上传'));
+ensureDir(path.join(CLOUD_TRANSFER_DIR, '下载'));
+ensureDir(path.join(CLOUD_TRANSFER_DIR, '_temp_extract'));
 updateFileIndex();
 updateImageIndex();
 
