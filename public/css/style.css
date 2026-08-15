@@ -967,3 +967,86 @@ body {
   .home-actions { flex-direction: column; gap: 10px; }
   .home-actions .btn-primary, .home-actions .btn-secondary { width: 100%; }
 }
+
+/* ========== Login Page ========== */
+.login-page {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+  padding: 20px;
+}
+.login-page.hidden { display: none; }
+
+.login-card {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.login-logo { font-size: 56px; margin-bottom: 8px; }
+.login-card h1 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+.login-sub { color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; }
+.login-card input[type="text"],
+.login-card input[type="password"] {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--font-family);
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+.login-card input:focus { outline: none; border-color: var(--accent); }
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0 16px;
+  text-align: left;
+}
+.login-card .btn-primary { width: 100%; padding: 12px; }
+.login-error {
+  min-height: 20px;
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* ========== Current user / account ========== */
+.current-user {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 4px;
+  align-self: center;
+  white-space: nowrap;
+}
+.settings-account-line { font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+.user-list { margin-bottom: 14px; }
+.user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 10px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.user-badge {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 10px;
+}

@@ -1,34 +1,60 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const cors = require('cors');
 const archiver = require('archiver');
 const http = require('http');
 const https = require('https');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ============ Paths ============
+const ROOT = __dirname;
+const LEGACY_KB_DIR = path.join(ROOT, '知识点库');          // 旧版单用户数据根目录
+const USERS_ROOT = path.join(ROOT, '知识点库', '用户');      // 多用户数据根目录
+const DATA_DIR = path.join(ROOT, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const SECRET_FILE = path.join(DATA_DIR, 'secret.key');
+const LEGACY_SETTINGS_FILE = path.join(ROOT, 'settings.json');
+const LEGACY_CLOUD_CONFIG_FILE = path.join(ROOT, '云端', 'cloud-config.json');
+const CLOUD_TRANSFER_DIR = path.join(ROOT, '云端', '中转');
+
+const SESSION_COOKIE = 'ksea_token';
+const SESSION_TTL = 30 * 24 * 60 * 60 * 1000; // 30 天
+
+// ============ Per-user context (AsyncLocalStorage) ============
+const als = new AsyncLocalStorage();
+
+function userPaths(username) {
+  const userDir = path.join(USERS_ROOT, username);
+  return {
+    username,
+    userDir,
+    kbDir: userDir,
+    storageDir: path.join(userDir, '储存文件'),
+    imageDir: path.join(userDir, '图片'),
+    fileIndex: path.join(userDir, '文件索引.json'),
+    imageIndex: path.join(userDir, '图片索引.json'),
+    settingsFile: path.join(userDir, 'settings.json'),
+    cloudConfigFile: path.join(userDir, 'cloud-config.json')
+  };
+}
+
+function getCtx() {
+  const ctx = als.getStore();
+  if (!ctx) throw new Error('无用户上下文');
+  return ctx;
+}
+
+// ============ Middleware ============
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Paths
-const KB_DIR = path.join(__dirname, '知识点库');
-const STORAGE_DIR = path.join(KB_DIR, '储存文件');
-const IMAGE_DIR = path.join(KB_DIR, '图片');
-const FILE_INDEX = path.join(KB_DIR, '文件索引.json');
-const IMAGE_INDEX = path.join(KB_DIR, '图片索引.json');
-const SETTINGS_FILE = path.join(__dirname, 'settings.json');
-const CLOUD_CONFIG_FILE = path.join(__dirname, '云端', 'cloud-config.json');
-const CLOUD_TRANSFER_DIR = path.join(__dirname, '云端', '中转');
-
-// Image static serving
-app.use('/图片', express.static(IMAGE_DIR));
-app.use('/api/images/file', express.static(IMAGE_DIR));
 
 // ============ Utility Functions ============
 
@@ -82,6 +108,7 @@ function loadJSON(filePath, defaultVal = []) {
 }
 
 function saveJSON(filePath, data) {
+  ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -89,14 +116,116 @@ function sanitizeFilename(name) {
   return name.replace(/[<>:"/\\|?*]/g, '_').trim();
 }
 
-// Resolve a path strictly inside IMAGE_DIR, rejecting path traversal (e.g. "../").
-// Returns the absolute path, or null if the filename tries to escape IMAGE_DIR.
-function getImagePath(filename) {
-  const base = path.resolve(IMAGE_DIR);
-  const target = path.resolve(IMAGE_DIR, filename);
+// Resolve a path strictly inside an image directory, rejecting path traversal.
+function getImagePath(filename, p = getCtx()) {
+  const base = path.resolve(p.imageDir);
+  const target = path.resolve(p.imageDir, filename);
   if (target !== base && !target.startsWith(base + path.sep)) return null;
   return target;
 }
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const out = {};
+  header.split(';').forEach(part => {
+    const idx = part.indexOf('=');
+    if (idx < 0) return;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (k) { try { out[k] = decodeURIComponent(v); } catch (_) { out[k] = v; } }
+  });
+  return out;
+}
+
+// ============ Users & Authentication ============
+
+function loadUsers() {
+  const data = loadJSON(USERS_FILE, { users: [] });
+  return Array.isArray(data.users) ? data.users : [];
+}
+
+function saveUsers(users) {
+  ensureDir(DATA_DIR);
+  saveJSON(USERS_FILE, { users });
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  try {
+    const [salt, hash] = String(stored).split(':');
+    const test = crypto.scryptSync(String(password), salt, 64).toString('hex');
+    const a = Buffer.from(hash, 'hex');
+    const b = Buffer.from(test, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch (_) { return false; }
+}
+
+function getSecret() {
+  ensureDir(DATA_DIR);
+  if (!fs.existsSync(SECRET_FILE)) {
+    fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'));
+  }
+  return fs.readFileSync(SECRET_FILE, 'utf-8').trim();
+}
+
+function signToken(username) {
+  const exp = Date.now() + SESSION_TTL;
+  const payload = `${username}.${exp}`;
+  const sig = crypto.createHmac('sha256', getSecret()).update(payload).digest('base64url');
+  return Buffer.from(payload).toString('base64url') + '.' + sig;
+}
+
+function verifyToken(token) {
+  try {
+    const [payloadB64, sig] = String(token).split('.');
+    if (!payloadB64 || !sig) return null;
+    const payload = Buffer.from(payloadB64, 'base64url').toString('utf-8');
+    const idx = payload.lastIndexOf('.');
+    if (idx < 0) return null;
+    const username = payload.slice(0, idx);
+    const exp = parseInt(payload.slice(idx + 1), 10);
+    if (!username || !exp || Date.now() > exp) return null;
+    const expected = crypto.createHmac('sha256', getSecret()).update(payload).digest('base64url');
+    if (sig !== expected) return null;
+    return username;
+  } catch (_) { return null; }
+}
+
+function setSessionCookie(res, token, remember) {
+  const parts = [`${SESSION_COOKIE}=${token}`, 'HttpOnly', 'Path=/', 'SameSite=Lax'];
+  if (remember) parts.push(`Max-Age=${Math.floor(SESSION_TTL / 1000)}`);
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+}
+
+const USERNAME_RE = /^[a-zA-Z0-9_\-\u4e00-\u9fa5]{1,32}$/;
+
+// Auth middleware: guard all /api/* except open auth endpoints.
+const AUTH_OPEN_PATHS = ['/api/auth/status', '/api/auth/login', '/api/auth/setup'];
+app.use('/api', (req, res, next) => {
+  const pathname = req.originalUrl.split('?')[0];
+  if (AUTH_OPEN_PATHS.includes(pathname)) return next();
+
+  const token = parseCookies(req)[SESSION_COOKIE];
+  const username = token ? verifyToken(token) : null;
+  if (!username) return res.status(401).json({ error: '未登录' });
+
+  const user = loadUsers().find(u => u.username === username);
+  if (!user) return res.status(401).json({ error: '账号不存在' });
+
+  const p = userPaths(username);
+  ensureDir(p.storageDir);
+  ensureDir(p.imageDir);
+  als.run({ username, isAdmin: !!user.isAdmin, ...p }, () => next());
+});
 
 // ============ Knowledge Point File Format Parser ============
 
@@ -176,11 +305,11 @@ function generateKnowledgeFile(data) {
 }
 
 // ---- Reciprocal (bidirectional) relation helpers ----
-function updateKpFile(number, updateFn) {
-  const index = loadJSON(FILE_INDEX);
+function updateKpFile(number, updateFn, p = getCtx()) {
+  const index = loadJSON(p.fileIndex);
   const entry = index.find(e => e.number === number);
   if (!entry) return;
-  const fp = path.join(STORAGE_DIR, entry.filename);
+  const fp = path.join(p.storageDir, entry.filename);
   if (!fs.existsSync(fp)) return;
   const data = parseKnowledgeFile(fp);
   updateFn(data);
@@ -194,8 +323,7 @@ function updateKpFile(number, updateFn) {
   fs.writeFileSync(fp, generateKnowledgeFile(fileData), 'utf-8');
 }
 
-function syncReciprocal(selfNumber, selfName, relatedNumber, relation, dir) {
-  // dir: 'next' = add self to target's nextRelated; 'prev' = add self to target's prevRelated
+function syncReciprocal(selfNumber, selfName, relatedNumber, relation, dir, p = getCtx()) {
   updateKpFile(relatedNumber, data => {
     const list = dir === 'next' ? data.nextRelated : data.prevRelated;
     const existing = list.find(r => r.number === selfNumber);
@@ -205,29 +333,27 @@ function syncReciprocal(selfNumber, selfName, relatedNumber, relation, dir) {
     } else {
       list.push({ number: selfNumber, relation: relation || '无', name: selfName });
     }
-  });
+  }, p);
 }
 
-function unsyncReciprocal(selfNumber, relatedNumber, dir) {
+function unsyncReciprocal(selfNumber, relatedNumber, dir, p = getCtx()) {
   updateKpFile(relatedNumber, data => {
     const list = dir === 'next' ? data.nextRelated : data.prevRelated;
     const idx = list.findIndex(r => r.number === selfNumber);
     if (idx >= 0) list.splice(idx, 1);
-  });
+  }, p);
 }
 
-function syncAllReciprocal(selfNumber, selfName, prevRelated, nextRelated, oldPrev, oldNext) {
-  // Add/update new reciprocal links
-  (prevRelated || []).forEach(r => syncReciprocal(selfNumber, selfName, r.number, r.relation, 'next'));
-  (nextRelated || []).forEach(r => syncReciprocal(selfNumber, selfName, r.number, r.relation, 'prev'));
-  // Remove old ones that are no longer present
+function syncAllReciprocal(selfNumber, selfName, prevRelated, nextRelated, oldPrev, oldNext, p = getCtx()) {
+  (prevRelated || []).forEach(r => syncReciprocal(selfNumber, selfName, r.number, r.relation, 'next', p));
+  (nextRelated || []).forEach(r => syncReciprocal(selfNumber, selfName, r.number, r.relation, 'prev', p));
   (oldPrev || []).forEach(r => {
     if (!(prevRelated || []).find(nr => nr.number === r.number))
-      unsyncReciprocal(selfNumber, r.number, 'next');
+      unsyncReciprocal(selfNumber, r.number, 'next', p);
   });
   (oldNext || []).forEach(r => {
     if (!(nextRelated || []).find(nr => nr.number === r.number))
-      unsyncReciprocal(selfNumber, r.number, 'prev');
+      unsyncReciprocal(selfNumber, r.number, 'prev', p);
   });
 }
 
@@ -235,12 +361,11 @@ function buildFilename(id, title) {
   return sanitizeFilename(`${id}：${title}.md`);
 }
 
-// Gets a knowledge point by ID from file index
-function getKpByNumber(number) {
-  const index = loadJSON(FILE_INDEX);
+function getKpByNumber(number, p = getCtx()) {
+  const index = loadJSON(p.fileIndex);
   const entry = index.find(e => e.number === number);
   if (!entry) return null;
-  const filePath = path.join(STORAGE_DIR, entry.filename);
+  const filePath = path.join(p.storageDir, entry.filename);
   if (!fs.existsSync(filePath)) return null;
   const parsed = parseKnowledgeFile(filePath);
   return { ...parsed, filename: entry.filename };
@@ -248,8 +373,8 @@ function getKpByNumber(number) {
 
 // ============ Mind Map Data Generation ============
 
-function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1) {
-  const index = loadJSON(FILE_INDEX);
+function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1, p = getCtx()) {
+  const index = loadJSON(p.fileIndex);
   const visited = new Set();
   const nodes = [];
   const edges = [];
@@ -257,7 +382,7 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
   function getNode(number) {
     const entry = index.find(e => e.number === number);
     if (!entry) return null;
-    const filePath = path.join(STORAGE_DIR, entry.filename);
+    const filePath = path.join(p.storageDir, entry.filename);
     if (!fs.existsSync(filePath)) return null;
     return parseKnowledgeFile(filePath);
   }
@@ -265,9 +390,6 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
   function addNodeAndEdges(number, parentNum = null, relation = null, depth = 0, bwMax = 1, fwMax = 1, direction = 'forward') {
     if (depth > (direction === 'backward' ? bwMax : fwMax)) return;
 
-    // Add a directed edge before the visited check so cycles are still linked.
-    // Arrows always point to the "后相关" (next) node, so a backward traversal
-    // means `number` (prev) points to `parentNum`.
     if (parentNum) {
       const edge = direction === 'backward'
         ? { from: number, to: parentNum, relation: relation || '无' }
@@ -319,7 +441,6 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
     addNodeAndEdges(centerNumber, null, null, 0, forwardDepth, forwardDepth);
   }
 
-  // Deduplicate reciprocal edges (A→B and B→A → keep only one)
   const edgeSet = new Set();
   const deduped = [];
   for (const e of edges) {
@@ -334,14 +455,13 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
 }
 
 // Update the file index (list all .md files)
-function updateFileIndex() {
-  const files = fs.readdirSync(STORAGE_DIR).filter(f => f.endsWith('.md'));
+function updateFileIndex(p = getCtx()) {
+  const files = fs.readdirSync(p.storageDir).filter(f => f.endsWith('.md'));
   const index = [];
   for (const f of files) {
     const match = f.match(/^(.+?)：(.+)\.md$/);
     if (match) {
-      // Read original name from file name section if available
-      const fp = path.join(STORAGE_DIR, f);
+      const fp = path.join(p.storageDir, f);
       let realName = match[2];
       try {
         const content = fs.readFileSync(fp, 'utf-8');
@@ -351,7 +471,6 @@ function updateFileIndex() {
       index.push({ number: match[1], name: realName, filename: f });
     }
   }
-  // Hierarchical numeric sort: split by '-' and compare each part numerically
   index.sort((a, b) => {
     const aParts = (a.number || '').split('-').map(s => parseInt(s) || 0);
     const bParts = (b.number || '').split('-').map(s => parseInt(s) || 0);
@@ -363,13 +482,13 @@ function updateFileIndex() {
     }
     return 0;
   });
-  saveJSON(FILE_INDEX, index);
+  saveJSON(p.fileIndex, index);
   return index;
 }
 
-function updateImageIndex() {
-  ensureDir(IMAGE_DIR);
-  const files = fs.readdirSync(IMAGE_DIR);
+function updateImageIndex(p = getCtx()) {
+  ensureDir(p.imageDir);
+  const files = fs.readdirSync(p.imageDir);
   const validExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
   const index = [];
   for (const f of files) {
@@ -383,34 +502,173 @@ function updateImageIndex() {
       index.push({ number: '', name: nameNoExt, filename: f });
     }
   }
-  saveJSON(IMAGE_INDEX, index);
+  saveJSON(p.imageIndex, index);
   return index;
 }
 
-// Initialize
-ensureDir(STORAGE_DIR);
-ensureDir(IMAGE_DIR);
-ensureDir(CLOUD_TRANSFER_DIR);
-ensureDir(path.join(CLOUD_TRANSFER_DIR, '上传'));
-ensureDir(path.join(CLOUD_TRANSFER_DIR, '下载'));
-ensureDir(path.join(CLOUD_TRANSFER_DIR, '_temp_extract'));
-updateFileIndex();
-updateImageIndex();
+// ============ Migration & Initialization ============
 
-// ============ API Routes ============
+// Move legacy single-user data (知识点库/储存文件, 图片, ...) into a user's space.
+function migrateLegacyData(username) {
+  const p = userPaths(username);
+  ensureDir(p.userDir);
 
-// --- Knowledge Points ---
+  const moves = [
+    { src: path.join(LEGACY_KB_DIR, '储存文件'), dst: p.storageDir },
+    { src: path.join(LEGACY_KB_DIR, '图片'), dst: p.imageDir },
+    { src: path.join(LEGACY_KB_DIR, '文件索引.json'), dst: p.fileIndex },
+    { src: path.join(LEGACY_KB_DIR, '图片索引.json'), dst: p.imageIndex },
+    { src: LEGACY_SETTINGS_FILE, dst: p.settingsFile }
+  ];
+  for (const m of moves) {
+    if (!fs.existsSync(m.src)) continue;
+    if (fs.existsSync(m.dst)) continue;
+    try {
+      fs.renameSync(m.src, m.dst);
+      console.log(`迁移: ${m.src} -> ${m.dst}`);
+    } catch (e) {
+      console.error(`迁移失败: ${m.src} -> ${m.dst}: ${e.message}`);
+    }
+  }
 
-// List all knowledge points
-app.get('/api/knowledge', (req, res) => {
-  const index = updateFileIndex();
-  res.json(index);
+  // cloud-config: only migrate domain/username (never the password)
+  if (fs.existsSync(LEGACY_CLOUD_CONFIG_FILE)) {
+    try {
+      const legacy = loadJSON(LEGACY_CLOUD_CONFIG_FILE, {});
+      const cfg = {
+        domain: legacy.domain || '',
+        username: legacy.username || '',
+        password: '',
+        saveCredentials: false
+      };
+      if (!fs.existsSync(p.cloudConfigFile)) saveJSON(p.cloudConfigFile, cfg);
+    } catch (_) {}
+  }
+}
+
+function initUserStorage(p) {
+  ensureDir(p.storageDir);
+  ensureDir(p.imageDir);
+  updateFileIndex(p);
+  updateImageIndex(p);
+}
+
+function initAll() {
+  ensureDir(DATA_DIR);
+  ensureDir(USERS_ROOT);
+  ensureDir(CLOUD_TRANSFER_DIR);
+  ensureDir(path.join(CLOUD_TRANSFER_DIR, '上传'));
+  ensureDir(path.join(CLOUD_TRANSFER_DIR, '下载'));
+  ensureDir(path.join(CLOUD_TRANSFER_DIR, '_temp_extract'));
+
+  // If legacy data is still present, migrate it into the admin account.
+  if (fs.existsSync(path.join(LEGACY_KB_DIR, '储存文件'))) {
+    const admin = loadUsers().find(u => u.isAdmin);
+    if (admin) migrateLegacyData(admin.username);
+  }
+
+  for (const u of loadUsers()) {
+    try { initUserStorage(userPaths(u.username)); }
+    catch (e) { console.error(`初始化用户 ${u.username} 失败:`, e.message); }
+  }
+}
+
+// ============ Auth Routes ============
+
+// Is the system initialized (has at least one account)?
+app.get('/api/auth/status', (req, res) => {
+  res.json({ initialized: loadUsers().length > 0 });
 });
 
-// Search knowledge points
+// First-run setup: create the admin account.
+app.post('/api/auth/setup', (req, res) => {
+  if (loadUsers().length > 0) return res.status(403).json({ error: '系统已初始化' });
+  const { username, password, remember } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: '账号和密码不能为空' });
+  if (!USERNAME_RE.test(String(username))) return res.status(400).json({ error: '账号只能包含中文、字母、数字、下划线或短横线（1-32位）' });
+  if (String(password).length < 4) return res.status(400).json({ error: '密码至少 4 位' });
+
+  const user = { username: String(username), passwordHash: hashPassword(password), isAdmin: true };
+  saveUsers([user]);
+  migrateLegacyData(String(username));
+  initUserStorage(userPaths(String(username)));
+
+  const token = signToken(String(username));
+  setSessionCookie(res, token, remember !== false);
+  res.json({ success: true, username: String(username), isAdmin: true });
+});
+
+// Login.
+app.post('/api/auth/login', (req, res) => {
+  const { username, password, remember } = req.body || {};
+  const user = loadUsers().find(u => u.username === username);
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: '账号或密码错误' });
+  }
+  const token = signToken(user.username);
+  setSessionCookie(res, token, remember !== false);
+  res.json({ success: true, username: user.username, isAdmin: !!user.isAdmin });
+});
+
+// Logout.
+app.post('/api/auth/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ success: true });
+});
+
+// Current user info.
+app.get('/api/auth/me', (req, res) => {
+  const ctx = getCtx();
+  res.json({ username: ctx.username, isAdmin: ctx.isAdmin });
+});
+
+// List users (admin only).
+app.get('/api/auth/users', (req, res) => {
+  const ctx = getCtx();
+  if (!ctx.isAdmin) return res.status(403).json({ error: '需要管理员权限' });
+  res.json({ users: loadUsers().map(u => ({ username: u.username, isAdmin: !!u.isAdmin })) });
+});
+
+// Create a user (admin only).
+app.post('/api/auth/users', (req, res) => {
+  const ctx = getCtx();
+  if (!ctx.isAdmin) return res.status(403).json({ error: '需要管理员权限' });
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: '账号和密码不能为空' });
+  if (!USERNAME_RE.test(String(username))) return res.status(400).json({ error: '账号只能包含中文、字母、数字、下划线或短横线（1-32位）' });
+  if (String(password).length < 4) return res.status(400).json({ error: '密码至少 4 位' });
+  const users = loadUsers();
+  if (users.find(u => u.username === username)) return res.status(400).json({ error: '账号已存在' });
+  users.push({ username: String(username), passwordHash: hashPassword(password), isAdmin: false });
+  saveUsers(users);
+  initUserStorage(userPaths(String(username)));
+  res.json({ success: true });
+});
+
+// Change own password.
+app.put('/api/auth/password', (req, res) => {
+  const ctx = getCtx();
+  const { oldPassword, newPassword } = req.body || {};
+  const users = loadUsers();
+  const user = users.find(u => u.username === ctx.username);
+  if (!user || !verifyPassword(oldPassword, user.passwordHash)) return res.status(400).json({ error: '原密码错误' });
+  if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
+  user.passwordHash = hashPassword(newPassword);
+  saveUsers(users);
+  res.json({ success: true });
+});
+
+// ============ Knowledge Point Routes ============
+
+app.get('/api/knowledge', (req, res) => {
+  const p = getCtx();
+  res.json(updateFileIndex(p));
+});
+
 app.get('/api/knowledge/search', (req, res) => {
+  const p = getCtx();
   const q = (req.query.q || '').toLowerCase();
-  const index = loadJSON(FILE_INDEX);
+  const index = loadJSON(p.fileIndex);
   if (!q) return res.json(index);
   const results = index.filter(e =>
     e.number.toLowerCase().includes(q) || e.name.toLowerCase().includes(q)
@@ -418,26 +676,25 @@ app.get('/api/knowledge/search', (req, res) => {
   res.json(results);
 });
 
-// Get a specific knowledge point
 app.get('/api/knowledge/:number', (req, res) => {
+  const p = getCtx();
   const number = decodeURIComponent(req.params.number);
-  const kp = getKpByNumber(number);
+  const kp = getKpByNumber(number, p);
   if (!kp) return res.status(404).json({ error: '知识点未找到' });
-  // Get names for related points
-  const index = loadJSON(FILE_INDEX);
+  const index = loadJSON(p.fileIndex);
   const nameMap = {};
   index.forEach(e => { nameMap[e.number] = e.name; });
   res.json({ ...kp, nameMap });
 });
 
-// Create a new knowledge point
 app.post('/api/knowledge', (req, res) => {
+  const p = getCtx();
   const { number, name, content, prevRelated, nextRelated } = req.body;
   if (!number || !name) return res.status(400).json({ error: '编号和名称不能为空' });
 
   const safeName = sanitizeFilename(name);
   const filename = buildFilename(number, safeName);
-  const filePath = path.join(STORAGE_DIR, filename);
+  const filePath = path.join(p.storageDir, filename);
 
   if (fs.existsSync(filePath)) {
     return res.status(400).json({ error: '该编号的知识点已存在' });
@@ -452,24 +709,23 @@ app.post('/api/knowledge', (req, res) => {
   };
   const fileContent = generateKnowledgeFile(fileData);
   fs.writeFileSync(filePath, fileContent, 'utf-8');
-  updateFileIndex();
-  syncAllReciprocal(number, name, fileData.prevRelated, fileData.nextRelated, [], []);
+  updateFileIndex(p);
+  syncAllReciprocal(number, name, fileData.prevRelated, fileData.nextRelated, [], [], p);
   res.json({ success: true, number, name: safeName, filename });
 });
 
-// Update a knowledge point
 app.put('/api/knowledge/:number', (req, res) => {
+  const p = getCtx();
   const oldNumber = decodeURIComponent(req.params.number);
   const { number, name, content, prevRelated, nextRelated } = req.body;
 
-  const index = loadJSON(FILE_INDEX);
+  const index = loadJSON(p.fileIndex);
   const entry = index.find(e => e.number === oldNumber);
   if (!entry) return res.status(404).json({ error: '知识点未找到' });
 
-  const oldPath = path.join(STORAGE_DIR, entry.filename);
+  const oldPath = path.join(p.storageDir, entry.filename);
   if (!fs.existsSync(oldPath)) return res.status(404).json({ error: '文件不存在' });
 
-  // Parse old data before overwriting
   const oldData = parseKnowledgeFile(oldPath);
   const oldPrev = oldData.prevRelated || [];
   const oldNext = oldData.nextRelated || [];
@@ -478,7 +734,7 @@ app.put('/api/knowledge/:number', (req, res) => {
   const newName = name || entry.name;
   const safeName = sanitizeFilename(newName);
   const newFilename = buildFilename(newNumber, safeName);
-  const newPath = path.join(STORAGE_DIR, newFilename);
+  const newPath = path.join(p.storageDir, newFilename);
 
   const fileData = {
     number: newNumber,
@@ -494,68 +750,66 @@ app.put('/api/knowledge/:number', (req, res) => {
     fs.unlinkSync(oldPath);
   }
 
-  // Update references in other files
   if (oldNumber !== newNumber) {
-    updateReferences(oldNumber, newNumber, newName);
+    updateReferences(oldNumber, newNumber, newName, p);
   }
 
-  syncAllReciprocal(newNumber, newName, fileData.prevRelated, fileData.nextRelated, oldPrev, oldNext);
-  updateFileIndex();
+  syncAllReciprocal(newNumber, newName, fileData.prevRelated, fileData.nextRelated, oldPrev, oldNext, p);
+  updateFileIndex(p);
   res.json({ success: true, number: newNumber, name: safeName, filename: newFilename });
 });
 
-// Delete a knowledge point
 app.delete('/api/knowledge/:number', (req, res) => {
+  const p = getCtx();
   const number = decodeURIComponent(req.params.number);
-  const index = loadJSON(FILE_INDEX);
+  const index = loadJSON(p.fileIndex);
   const entry = index.find(e => e.number === number);
   if (!entry) return res.status(404).json({ error: '知识点未找到' });
 
-  const filePath = path.join(STORAGE_DIR, entry.filename);
+  const filePath = path.join(p.storageDir, entry.filename);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-  // Remove references from other files
-  removeReferences(number);
+  removeReferences(number, p);
 
-  updateFileIndex();
+  updateFileIndex(p);
   res.json({ success: true });
 });
 
-// Get mind map data
 app.get('/api/knowledge/:number/mindmap', (req, res) => {
+  const p = getCtx();
   const number = decodeURIComponent(req.params.number);
   const mode = req.query.mode || 'forward';
   const forwardDepth = parseInt(req.query.forwardDepth) || 1;
   const backwardDepth = parseInt(req.query.backwardDepth) || 1;
 
-  const data = getMindMapData(number, mode, forwardDepth, backwardDepth);
-  res.json(data);
+  res.json(getMindMapData(number, mode, forwardDepth, backwardDepth, p));
 });
 
-// --- Images ---
+// ============ Image Routes ============
 
 const imageUpload = multer({
   storage: multer.diskStorage({
-    destination: IMAGE_DIR,
+    destination: (req, file, cb) => {
+      try { cb(null, getCtx().imageDir); }
+      catch (e) { cb(e); }
+    },
     filename: (req, file, cb) => {
       const ext = path.extname(file.originalname);
-      const safeExt = ext.toLowerCase();
-      cb(null, `_tmp_upload_${Date.now()}${safeExt}`);
+      cb(null, `_tmp_upload_${Date.now()}${ext.toLowerCase()}`);
     }
   }),
   limits: { fileSize: 50 * 1024 * 1024 }
 });
 
-// List images
 app.get('/api/images', (req, res) => {
-  const index = updateImageIndex();
-  res.json(index);
+  const p = getCtx();
+  res.json(updateImageIndex(p));
 });
 
-// Search images
 app.get('/api/images/search', (req, res) => {
+  const p = getCtx();
   const q = (req.query.q || '').toLowerCase();
-  const index = updateImageIndex();
+  const index = updateImageIndex(p);
   if (!q) return res.json(index);
   const results = index.filter(e =>
     e.number.toLowerCase().includes(q) || e.name.toLowerCase().includes(q)
@@ -563,73 +817,73 @@ app.get('/api/images/search', (req, res) => {
   res.json(results);
 });
 
-// Upload image
 app.post('/api/images/upload', imageUpload.single('image'), (req, res) => {
+  const p = getCtx();
   if (!req.file) return res.status(400).json({ error: '未选择文件' });
   const { number, name } = req.body;
   const safeName = sanitizeFilename(name || '未命名');
   const safeNumber = sanitizeFilename(number || '');
   const ext = path.extname(req.file.originalname).toLowerCase();
   const newFilename = `${safeNumber}：${safeName}${ext}`;
-  const newPath = path.join(IMAGE_DIR, newFilename);
+  const newPath = path.join(p.imageDir, newFilename);
 
-  // Handle duplicate names
   let finalPath = newPath;
   let counter = 1;
   while (fs.existsSync(finalPath)) {
-    finalPath = path.join(IMAGE_DIR, `${safeNumber}：${safeName}(${counter})${ext}`);
+    finalPath = path.join(p.imageDir, `${safeNumber}：${safeName}(${counter})${ext}`);
     counter++;
   }
 
   fs.renameSync(req.file.path, finalPath);
-  updateImageIndex();
+  updateImageIndex(p);
   const finalFilename = path.basename(finalPath);
   res.json({ success: true, filename: finalFilename, number: safeNumber, name: safeName });
 });
 
-// Update image info
 app.put('/api/images/:filename', (req, res) => {
+  const p = getCtx();
   const oldFilename = decodeURIComponent(req.params.filename);
   const { number, name } = req.body;
-  const oldPath = getImagePath(oldFilename);
+  const oldPath = getImagePath(oldFilename, p);
   if (!oldPath || !fs.existsSync(oldPath)) return res.status(404).json({ error: '图片未找到' });
 
   const ext = path.extname(oldFilename);
   const safeName = sanitizeFilename(name || '');
   const safeNumber = sanitizeFilename(number || '');
   const newFilename = `${safeNumber}：${safeName}${ext}`;
-  const newPath = path.join(IMAGE_DIR, newFilename);
+  const newPath = path.join(p.imageDir, newFilename);
 
   if (oldPath !== newPath) {
     if (fs.existsSync(newPath)) return res.status(400).json({ error: '同名图片已存在' });
     fs.renameSync(oldPath, newPath);
   }
-  updateImageIndex();
+  updateImageIndex(p);
   res.json({ success: true, filename: newFilename });
 });
 
-// Serve image files
 app.get('/api/images/file/:filename', (req, res) => {
+  const p = getCtx();
   const filename = decodeURIComponent(req.params.filename);
-  const filePath = getImagePath(filename);
+  const filePath = getImagePath(filename, p);
   if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('Not found');
   res.sendFile(filePath);
 });
 
-// Delete image
 app.delete('/api/images/:filename', (req, res) => {
+  const p = getCtx();
   const filename = decodeURIComponent(req.params.filename);
-  const filePath = getImagePath(filename);
+  const filePath = getImagePath(filename, p);
   if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: '图片未找到' });
   try { fs.unlinkSync(filePath); } catch (e) { return res.status(500).json({ error: '删除失败: ' + e.message }); }
-  updateImageIndex();
+  updateImageIndex(p);
   res.json({ success: true });
 });
 
-// --- Settings ---
+// ============ Settings (per user) ============
 
 app.get('/api/settings', (req, res) => {
-  const settings = loadJSON(SETTINGS_FILE, {
+  const p = getCtx();
+  const settings = loadJSON(p.settingsFile, {
     signature: '',
     signatureFont: 'sans-serif',
     refreshRate: 60,
@@ -639,15 +893,16 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.put('/api/settings', (req, res) => {
-  const settings = req.body;
-  saveJSON(SETTINGS_FILE, settings);
+  const p = getCtx();
+  saveJSON(p.settingsFile, req.body);
   res.json({ success: true });
 });
 
-// --- Cloud Sync ---
+// ============ Cloud Sync (per user) ============
 
 app.get('/api/cloud-config', (req, res) => {
-  const config = loadJSON(CLOUD_CONFIG_FILE, {
+  const p = getCtx();
+  const config = loadJSON(p.cloudConfigFile, {
     domain: '',
     username: '',
     password: '',
@@ -657,18 +912,17 @@ app.get('/api/cloud-config', (req, res) => {
 });
 
 app.put('/api/cloud-config', (req, res) => {
+  const p = getCtx();
   const config = req.body;
-  // Only persist the password when the user explicitly opts in ("记住登录信息"),
-  // so credentials are not silently written to disk in plaintext.
   if (!config.saveCredentials) config.password = '';
-  saveJSON(CLOUD_CONFIG_FILE, config);
+  saveJSON(p.cloudConfigFile, config);
   res.json({ success: true });
 });
 
-// Upload to cloud
 app.post('/api/cloud/upload', async (req, res) => {
+  const p = getCtx();
   try {
-    const config = loadJSON(CLOUD_CONFIG_FILE);
+    const config = loadJSON(p.cloudConfigFile);
     if (!config.domain) return res.status(400).json({ error: '请先配置云端服务器' });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -676,18 +930,16 @@ app.post('/api/cloud/upload', async (req, res) => {
     const zipFilename = `${timestamp}_${safeUser}_knowledge.zip`;
     const zipPath = path.join(CLOUD_TRANSFER_DIR, '上传', zipFilename);
 
-    // Create zip
     await new Promise((resolve, reject) => {
       const output = fs.createWriteStream(zipPath);
       const archive = archiver('zip', { zlib: { level: 9 } });
       output.on('close', resolve);
       archive.on('error', reject);
       archive.pipe(output);
-      archive.directory(KB_DIR, '知识点库');
+      archive.directory(p.kbDir, '知识点库');
       archive.finalize();
     });
 
-    // Upload to cloud server
     const zipContent = fs.readFileSync(zipPath);
     const safeFilename = Buffer.from(zipFilename, 'utf-8').toString('base64');
     const url = `${config.domain}/transfer/api/upload?name=${encodeURIComponent(safeFilename)}`;
@@ -701,7 +953,7 @@ app.post('/api/cloud/upload', async (req, res) => {
       body: zipContent
     });
 
-    try { fs.unlinkSync(zipPath); } catch (_) { /* ignore cleanup failure */ }
+    try { fs.unlinkSync(zipPath); } catch (_) {}
 
     if (result.status < 200 || result.status >= 300) {
       let errMsg = 'HTTP ' + result.status;
@@ -714,15 +966,14 @@ app.post('/api/cloud/upload', async (req, res) => {
   }
 });
 
-// Download from cloud
 app.post('/api/cloud/download', async (req, res) => {
+  const p = getCtx();
   try {
-    const config = loadJSON(CLOUD_CONFIG_FILE);
+    const config = loadJSON(p.cloudConfigFile);
     if (!config.domain) return res.status(400).json({ error: '请先配置云端服务器' });
 
     const authHeader = { 'Authorization': 'Basic ' + Buffer.from(`${config.username}:${config.password}`).toString('base64') };
 
-    // Get file list
     const listResult = await cloudRequest(`${config.domain}/transfer/api/list`, { headers: authHeader });
     if (listResult.status === 401) throw new Error('云端认证失败，请检查账号和密码');
     if (listResult.status < 200 || listResult.status >= 300) {
@@ -733,7 +984,6 @@ app.post('/api/cloud/download', async (req, res) => {
     let fileList;
     try { fileList = JSON.parse(listResult.body); } catch { throw new Error('Invalid response: ' + listResult.body.substring(0, 200)); }
 
-    // Find the most recent backup
     const files = fileList.files || [];
     const safeUser = encodeURIComponent(config.username || 'user');
     const userFiles = files.filter(f => f.includes(safeUser)).sort().reverse();
@@ -741,7 +991,6 @@ app.post('/api/cloud/download', async (req, res) => {
 
     const latestFile = userFiles[0];
 
-    // Download the file
     const downloadUrl = `${config.domain}/transfer/api/download/${encodeURIComponent(latestFile)}`;
     const dlResult = await cloudRequest(downloadUrl, { headers: authHeader, binary: true });
     if (dlResult.status === 401) throw new Error('云端认证失败，请检查账号和密码');
@@ -754,19 +1003,16 @@ app.post('/api/cloud/download', async (req, res) => {
       } catch (_) {}
       throw new Error('下载失败: ' + errMsg);
     }
-    const fileData = dlResult.body; // already a Buffer
+    const fileData = dlResult.body;
 
-    // Save and extract
     const zipPath = path.join(CLOUD_TRANSFER_DIR, '下载', latestFile);
     fs.writeFileSync(zipPath, fileData);
 
-    // Extract
     const extractDir = path.join(CLOUD_TRANSFER_DIR, '_temp_extract');
     const extract = require('extract-zip');
     await extract(zipPath, { dir: extractDir });
 
-    // Back up the current local knowledge base before overwriting, so a bad
-    // download can be rolled back.
+    // Back up current local data before overwriting.
     const backupDir = path.join(CLOUD_TRANSFER_DIR, '本地备份');
     ensureDir(backupDir);
     const backupName = `本地备份_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
@@ -777,17 +1023,14 @@ app.post('/api/cloud/download', async (req, res) => {
       output.on('close', resolve);
       archive.on('error', reject);
       archive.pipe(output);
-      archive.directory(KB_DIR, '知识点库');
+      archive.directory(p.kbDir, '知识点库');
       archive.finalize();
     });
 
-    // Replace current KB — copy new files, then remove stale ones individually
     const tempKb = path.join(extractDir, '知识点库');
     if (fs.existsSync(tempKb)) {
-      ensureDir(KB_DIR);
-      // First: copy new files over (overwrite existing)
-      copyDirSync(tempKb, KB_DIR);
-      // Second: remove old files that don't exist in new data
+      ensureDir(p.kbDir);
+      copyDirSync(tempKb, p.kbDir);
       const newFiles = new Set();
       const scanDir = (d) => {
         for (const f of fs.readdirSync(d)) {
@@ -800,7 +1043,7 @@ app.post('/api/cloud/download', async (req, res) => {
       const cleanDir = (d) => {
         for (const f of fs.readdirSync(d)) {
           const fp = path.join(d, f);
-          const rel = path.relative(KB_DIR, fp);
+          const rel = path.relative(p.kbDir, fp);
           if (fs.statSync(fp).isDirectory()) {
             cleanDir(fp);
             if (fs.readdirSync(fp).length === 0) try { fs.rmdirSync(fp); } catch (_) {}
@@ -809,15 +1052,14 @@ app.post('/api/cloud/download', async (req, res) => {
           }
         }
       };
-      if (fs.existsSync(KB_DIR)) cleanDir(KB_DIR);
+      if (fs.existsSync(p.kbDir)) cleanDir(p.kbDir);
     }
 
-    // Cleanup (safe-delete may fail, ignore)
     try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
     try { fs.unlinkSync(zipPath); } catch (_) {}
 
-    updateFileIndex();
-    updateImageIndex();
+    updateFileIndex(p);
+    updateImageIndex(p);
     res.json({ success: true, message: '下载成功，本地知识点库已更新' });
   } catch (err) {
     res.status(500).json({ error: '下载失败: ' + err.message });
@@ -840,11 +1082,11 @@ function copyDirSync(src, dest) {
 
 // ============ Helper: Update/Remove References ============
 
-function updateReferences(oldNumber, newNumber, newName) {
-  const index = loadJSON(FILE_INDEX);
+function updateReferences(oldNumber, newNumber, newName, p = getCtx()) {
+  const index = loadJSON(p.fileIndex);
   for (const entry of index) {
     if (entry.number === oldNumber) continue;
-    const fp = path.join(STORAGE_DIR, entry.filename);
+    const fp = path.join(p.storageDir, entry.filename);
     if (!fs.existsSync(fp)) continue;
     let kp = parseKnowledgeFile(fp);
 
@@ -875,10 +1117,10 @@ function updateReferences(oldNumber, newNumber, newName) {
   }
 }
 
-function removeReferences(number) {
-  const index = loadJSON(FILE_INDEX);
+function removeReferences(number, p = getCtx()) {
+  const index = loadJSON(p.fileIndex);
   for (const entry of index) {
-    const fp = path.join(STORAGE_DIR, entry.filename);
+    const fp = path.join(p.storageDir, entry.filename);
     if (!fs.existsSync(fp)) continue;
     let kp = parseKnowledgeFile(fp);
     let changed = false;
@@ -908,9 +1150,12 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start server
+// ============ Start ============
+
+initAll();
+
 app.listen(PORT, () => {
   console.log(`🌊 知识之海 已启航！`);
   console.log(`📍 访问地址: http://localhost:${PORT}`);
-  console.log(`📚 知识点库: ${STORAGE_DIR}`);
+  console.log(`👥 多用户数据目录: ${USERS_ROOT}`);
 });

@@ -5,40 +5,128 @@
 const resolvePath = (url) => url.replace(/^\/api\//, 'api/');
 
 const API = {
-  async get(url) {
-    const res = await fetch(resolvePath(url));
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+  async _req(url, opts) {
+    let res;
+    try {
+      res = await fetch(resolvePath(url), opts);
+    } catch (e) {
+      throw new Error('网络错误，请检查连接');
+    }
+    if (res.status === 401 && !url.includes('/api/auth/')) {
+      showLoginPage();
+      throw new Error('登录已过期，请重新登录');
+    }
+    if (!res.ok) {
+      let msg = '请求失败';
+      try { const j = await res.json(); msg = j.error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return res.json();
+    return res.text();
   },
-  async post(url, data) {
-    const res = await fetch(resolvePath(url), {
+  get(url) { return this._req(url); },
+  post(url, data) {
+    return this._req(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Request failed');
-    return res.json();
   },
-  async put(url, data) {
-    const res = await fetch(resolvePath(url), {
+  put(url, data) {
+    return this._req(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Request failed');
-    return res.json();
   },
-  async del(url) {
-    const res = await fetch(resolvePath(url), { method: 'DELETE' });
-    if (!res.ok) throw new Error((await res.json()).error || 'Request failed');
-    return res.json();
-  },
+  del(url) { return this._req(url, { method: 'DELETE' }); },
   async upload(url, formData) {
-    const res = await fetch(resolvePath(url), { method: 'POST', body: formData });
-    if (!res.ok) throw new Error((await res.json()).error || 'Upload failed');
+    let res;
+    try {
+      res = await fetch(resolvePath(url), { method: 'POST', body: formData });
+    } catch (e) { throw new Error('网络错误，请检查连接'); }
+    if (res.status === 401) {
+      showLoginPage();
+      throw new Error('登录已过期，请重新登录');
+    }
+    if (!res.ok) {
+      let msg = '上传失败';
+      try { const j = await res.json(); msg = j.error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
     return res.json();
   }
 };
+
+// ========== Auth / Login ==========
+let currentUser = null;
+
+function showLoginPage() {
+  currentUser = null;
+  document.getElementById('login-page').classList.remove('hidden');
+  document.getElementById('topbar').style.display = 'none';
+  document.getElementById('workspace').style.display = 'none';
+}
+
+function hideLoginPage() {
+  document.getElementById('login-page').classList.add('hidden');
+  document.getElementById('topbar').style.display = '';
+  document.getElementById('workspace').style.display = '';
+}
+
+function setLoginMode(mode) {
+  const isSetup = mode === 'setup';
+  document.getElementById('login-sub').textContent = isSetup ? '首次使用：创建管理员账号' : '登录';
+  document.getElementById('login-confirm').classList.toggle('hidden', !isSetup);
+  document.getElementById('login-submit').textContent = isSetup ? '创建账号并进入' : '登录';
+  document.getElementById('login-page').dataset.mode = mode;
+}
+
+function loginError(msg) {
+  document.getElementById('login-error').textContent = msg || '';
+}
+
+function startApp(user) {
+  currentUser = user;
+  hideLoginPage();
+  document.getElementById('current-user').textContent = user.username;
+  document.getElementById('settings-current-user').textContent = user.username;
+  document.getElementById('user-manage-section').classList.toggle('hidden', !user.isAdmin);
+  PageManager.goHome();
+  loadSettings();
+  loadCloudConfig();
+}
+
+async function loadUserList() {
+  try {
+    const data = await API.get('/api/auth/users');
+    const container = document.getElementById('user-list');
+    container.innerHTML = data.users.map(u => `
+      <div class="user-item">
+        <span>${escHtml(u.username)}</span>
+        <span class="user-badge">${u.isAdmin ? '管理员' : '普通用户'}</span>
+      </div>
+    `).join('');
+  } catch (e) { /* ignore */ }
+}
+
+async function initAuth() {
+  let initialized = true;
+  try {
+    const status = await API.get('/api/auth/status');
+    initialized = status.initialized;
+  } catch (e) { /* assume initialized */ }
+  setLoginMode(initialized ? 'login' : 'setup');
+
+  try {
+    const me = await API.get('/api/auth/me');
+    startApp(me);
+    return;
+  } catch (e) { /* not logged in */ }
+
+  showLoginPage();
+}
 
 // ========== Page Manager ==========
 const PageManager = {
@@ -568,12 +656,6 @@ async function uploadImage(file, number, name) {
 
 // ========== Event Listeners ==========
 document.addEventListener('DOMContentLoaded', () => {
-  // Load initial data
-  loadKnowledgeList();
-  loadSignature();
-  loadSettings();
-  loadCloudConfig();
-
   // ---- Top Bar ----
   document.getElementById('btn-new-kp').addEventListener('click', () => {
     document.getElementById('kp-page').dataset.currentNumber = '';
@@ -595,6 +677,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('settings-panel').classList.remove('hidden');
     loadSettings();
     loadCloudConfig();
+    loadUserList();
   });
 
   // ---- Home Page ----
@@ -953,4 +1036,79 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('mindmap-mode-modal').classList.add('hidden');
     }
   });
+
+  // ---- Auth ----
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError('');
+    const mode = document.getElementById('login-page').dataset.mode || 'login';
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const remember = document.getElementById('login-remember').checked;
+
+    if (!username || !password) { loginError('请输入账号和密码'); return; }
+    if (mode === 'setup') {
+      const confirm = document.getElementById('login-confirm').value;
+      if (password !== confirm) { loginError('两次输入的密码不一致'); return; }
+    }
+
+    const submitBtn = document.getElementById('login-submit');
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch(resolvePath(mode === 'setup' ? '/api/auth/setup' : '/api/auth/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, remember })
+      });
+      const data = await res.json();
+      if (!res.ok) { loginError(data.error || '登录失败'); return; }
+      document.getElementById('login-password').value = '';
+      document.getElementById('login-confirm').value = '';
+      startApp(data);
+    } catch (err) {
+      loginError('网络错误，请重试');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    try { await API.post('/api/auth/logout', {}); } catch (_) {}
+    document.getElementById('settings-panel').classList.add('hidden');
+    if (mindMap) { mindMap.destroy(); mindMap = null; }
+    _allKnowledgeList = [];
+    document.getElementById('login-username').value = '';
+    document.getElementById('login-password').value = '';
+    document.getElementById('login-confirm').value = '';
+    showLoginPage();
+  });
+
+  document.getElementById('btn-change-password').addEventListener('click', async () => {
+    const oldPassword = document.getElementById('pw-old').value;
+    const newPassword = document.getElementById('pw-new').value;
+    if (!oldPassword || !newPassword) { showToast('请输入原密码和新密码'); return; }
+    if (newPassword.length < 4) { showToast('新密码至少 4 位'); return; }
+    try {
+      await API.put('/api/auth/password', { oldPassword, newPassword });
+      showToast('密码已修改');
+      document.getElementById('pw-old').value = '';
+      document.getElementById('pw-new').value = '';
+    } catch (e) { showToast('修改失败: ' + e.message); }
+  });
+
+  document.getElementById('btn-add-user').addEventListener('click', async () => {
+    const username = document.getElementById('new-user-name').value.trim();
+    const password = document.getElementById('new-user-password').value;
+    if (!username || !password) { showToast('请输入账号和密码'); return; }
+    try {
+      await API.post('/api/auth/users', { username, password });
+      showToast('账号已添加');
+      document.getElementById('new-user-name').value = '';
+      document.getElementById('new-user-password').value = '';
+      loadUserList();
+    } catch (e) { showToast('添加失败: ' + e.message); }
+  });
+
+  // Kick off authentication
+  initAuth();
 });

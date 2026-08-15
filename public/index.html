@@ -21,8 +21,25 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
+  <!-- 登录 / 首次初始化 -->
+  <div id="login-page" class="login-page">
+    <div class="login-card">
+      <div class="login-logo">🌊</div>
+      <h1>知识之海</h1>
+      <p class="login-sub" id="login-sub">登录</p>
+      <form id="login-form" autocomplete="off">
+        <input type="text" id="login-username" placeholder="账号" autocomplete="username">
+        <input type="password" id="login-password" placeholder="密码" autocomplete="current-password">
+        <input type="password" id="login-confirm" placeholder="确认密码" class="hidden" autocomplete="new-password">
+        <label class="login-remember"><input type="checkbox" id="login-remember" checked> 记住我（30天内免登录）</label>
+        <button type="submit" id="login-submit" class="btn-primary">登录</button>
+        <p class="login-error" id="login-error"></p>
+      </form>
+    </div>
+  </div>
+
   <!-- 顶部导航栏 -->
-  <header id="topbar">
+  <header id="topbar" style="display:none">
     <div class="topbar-left">
       <span class="app-logo">🌊</span>
       <span class="app-title">知识之海</span>
@@ -32,6 +49,7 @@
       <div id="search-results" class="search-dropdown hidden"></div>
     </div>
     <div class="topbar-right">
+      <span id="current-user" class="current-user"></span>
       <button id="btn-new-kp" class="top-btn" title="新建知识点">＋ 新建</button>
       <button id="btn-images" class="top-btn" title="图片管理">🖼 图片</button>
       <button id="btn-settings-toggle" class="top-btn settings-btn" title="设置">⚙</button>
@@ -39,7 +57,7 @@
   </header>
 
   <!-- 主工作区 -->
-  <div id="workspace">
+  <div id="workspace" style="display:none">
     <!-- 首页 -->
     <div id="home-page" class="page active">
       <div class="home-container">
@@ -274,6 +292,23 @@
             <button id="btn-cloud-download" class="btn-primary">📥 从云端下载</button>
           </div>
           <div id="cloud-status" class="cloud-status"></div>
+        </div>
+        <div class="settings-section">
+          <h3>👤 账号</h3>
+          <p class="settings-account-line">当前登录：<span id="settings-current-user"></span></p>
+          <label>原密码: <input type="password" id="pw-old" placeholder="输入原密码" autocomplete="current-password"></label>
+          <label>新密码: <input type="password" id="pw-new" placeholder="输入新密码（至少4位）" autocomplete="new-password"></label>
+          <div class="cloud-actions">
+            <button id="btn-change-password" class="btn-secondary">🔑 修改密码</button>
+            <button id="btn-logout" class="btn-danger">退出登录</button>
+          </div>
+        </div>
+        <div class="settings-section hidden" id="user-manage-section">
+          <h3>👥 用户管理（管理员）</h3>
+          <div id="user-list" class="user-list"></div>
+          <label>新账号: <input type="text" id="new-user-name" placeholder="账号（中文/字母/数字/下划线）"></label>
+          <label>密码: <input type="password" id="new-user-password" placeholder="至少4位" autocomplete="new-password"></label>
+          <button id="btn-add-user" class="btn-primary">＋ 添加账号</button>
         </div>
         <div class="settings-actions">
           <button id="btn-settings-close" class="btn-secondary">关闭</button>

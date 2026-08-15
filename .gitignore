@@ -5,3 +5,6 @@ settings.json
 *.txt
 云端/中转/
 云端/cloud-config.json
+data/
+知识点库/用户/*/settings.json
+知识点库/用户/*/cloud-config.json
