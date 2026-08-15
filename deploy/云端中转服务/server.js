@@ -1,7 +1,7 @@
 // ============================================
 // 知识之海 - 云端中转服务（部署在 musouboshiasa.com 服务器 3456 端口）
 // 响应主应用请求：/transfer/api/upload、/transfer/api/list、/transfer/api/download/*
-// 同时提供首页展示备份文件列表
+// 同时提供首页展示服务运行状态
 // 启动: node server.js （或用 systemd 管理）
 // ============================================
 const http = require('http');
@@ -13,19 +13,30 @@ const PORT = 3456;
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 单次上传上限 500 MB
 
 // 确保目录存在
 [UPLOAD_DIR, DATA_DIR].forEach(d => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
-// 初始化用户数据（默认账号，部署后可修改）
+// 初始化用户数据
+// 可通过环境变量 CLOUD_USERNAME / CLOUD_PASSWORD 指定初始账号；
+// 未指定密码时自动生成随机密码并打印到启动日志，请首次启动后立即修改。
 if (!fs.existsSync(USERS_FILE)) {
+  const crypto = require('crypto');
+  const username = process.env.CLOUD_USERNAME || 'admin';
+  const password = process.env.CLOUD_PASSWORD || crypto.randomBytes(12).toString('hex');
+  const dir = `${username}_知识库`;
   fs.writeFileSync(USERS_FILE, JSON.stringify({
-    users: [
-      { username: 'musouboshiasa', password: '【已移除】', dir: 'musouboshiasa_知识库' }
-    ]
+    users: [ { username, password, dir } ]
   }, null, 2));
+  console.log('==============================================');
+  console.log('已创建初始账号（请立即登录修改密码）');
+  console.log('  用户名: ' + username);
+  console.log('  密码:   ' + password);
+  console.log('  用户数据文件: ' + USERS_FILE);
+  console.log('==============================================');
 }
 
 // 验证用户（Basic Auth）
@@ -44,7 +55,7 @@ function authUser(req) {
 // ICP 备案号
 const ICP = '辽ICP备2026015611号-1';
 
-// 首页 HTML（展示备份文件列表）
+// 首页 HTML（展示服务运行状态）
 function getHomePage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -60,7 +71,8 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f
 .icon { font-size: 64px; margin-bottom: 16px; }
 h1 { font-size: 28px; color: #1a2332; margin-bottom: 8px; }
 .sub { color: #8a9bb0; font-size: 14px; margin-bottom: 32px; }
-.files { text-align: left; border-top: 1px solid #e8ecf0; padding-top: 20px; margin-top: 20px; }
+.status { color: #10b981; font-size: 14px; margin-bottom: 20px; }
+.files { text-align: left; border-top: 1px solid #e8ecf0; padding-top: 20px; margin-top: 20px; color: #5a6d80; font-size: 14px; line-height: 1.8; }
 .files a { display: block; padding: 10px 12px; color: #3b82f6; text-decoration: none; border-radius: 8px; font-size: 14px; }
 .files a:hover { background: #eff6ff; }
 .footer { text-align: center; padding: 20px; color: #8a9bb0; font-size: 12px; border-top: 1px solid #e8ecf0; }
@@ -72,20 +84,18 @@ h1 { font-size: 28px; color: #1a2332; margin-bottom: 8px; }
     <div class="icon">🌊</div>
     <h1>知识之海 · 云端</h1>
     <p class="sub">知识之海 云端存储节点</p>
-    <div class="files" id="fileList">加载中...</div>
+    <div class="status" id="status">正在检测服务状态...</div>
+    <div class="files">
+      <p>备份文件的上传、下载与查看请在「知识之海」软件内操作：设置 → 云端同步。</p>
+    </div>
   </div>
 </div>
 <div class="footer">${ICP}</div>
 <script>
-fetch('/transfer/api/list', { headers: { 'Authorization': 'Basic ' + btoa('musouboshiasa:【已移除】') } })
+fetch('/transfer/api/ping')
   .then(r => r.json())
-  .then(d => {
-    const el = document.getElementById('fileList');
-    const files = d.files || [];
-    if (files.length === 0) { el.innerHTML = '暂无备份文件'; return; }
-    el.innerHTML = files.map(f => '<a href="/transfer/api/download/' + encodeURIComponent(f) + '" target="_blank">📦 ' + f + '</a>').join('');
-  })
-  .catch(() => { document.getElementById('fileList').innerHTML = '加载失败'; });
+  .then(d => { document.getElementById('status').textContent = '✅ 服务运行正常 · ' + (d.time || ''); })
+  .catch(() => { document.getElementById('status').textContent = '⚠️ 无法连接云端服务'; });
 </script>
 </body>
 </html>`;
@@ -128,15 +138,35 @@ const server = http.createServer((req, res) => {
     if (pathname === '/transfer/api/upload' && req.method === 'POST') {
       let filename = `backup_${Date.now()}.zip`;
       if (parsedUrl.query.name) {
-        filename = Buffer.from(decodeURIComponent(parsedUrl.query.name), 'base64').toString('utf-8');
+        try {
+          filename = Buffer.from(decodeURIComponent(parsedUrl.query.name), 'base64').toString('utf-8');
+        } catch (_) { /* 使用默认文件名 */ }
       }
-      const userDir = path.join(UPLOAD_DIR, req.user.dir);
+      // 防止文件名包含目录穿越（如 ../）
+      filename = path.basename(filename) || `backup_${Date.now()}.zip`;
+      const userDir = path.resolve(UPLOAD_DIR, req.user.dir);
       if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
-      const destPath = path.join(userDir, filename);
+      const destPath = path.resolve(userDir, filename);
 
       const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
+      let size = 0;
+      let tooLarge = false;
+      req.on('data', chunk => {
+        if (tooLarge) return;
+        size += chunk.length;
+        if (size > MAX_UPLOAD_BYTES) {
+          tooLarge = true;
+          chunks.length = 0;
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on('end', () => {
+        if (tooLarge) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: '上传文件过大' }));
+          return;
+        }
         const buffer = Buffer.concat(chunks);
         fs.writeFileSync(destPath, buffer);
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -161,10 +191,16 @@ const server = http.createServer((req, res) => {
 
     // 下载
     if (pathname.startsWith('/transfer/api/download/') && req.method === 'GET') {
-      const filename = decodeURIComponent(pathname.replace('/transfer/api/download/', ''));
-      const userDir = path.join(UPLOAD_DIR, req.user.dir);
-      const filePath = path.join(userDir, filename);
+      const rawName = decodeURIComponent(pathname.replace('/transfer/api/download/', ''));
+      const filename = path.basename(rawName); // 去掉任何目录部分，防目录穿越
+      const userDir = path.resolve(UPLOAD_DIR, req.user.dir);
+      const filePath = path.resolve(userDir, filename);
 
+      if (filePath !== userDir && !filePath.startsWith(userDir + path.sep)) {
+        res.writeHead(404);
+        res.end('File not found');
+        return;
+      }
       if (!fs.existsSync(filePath)) {
         res.writeHead(404);
         res.end('File not found');

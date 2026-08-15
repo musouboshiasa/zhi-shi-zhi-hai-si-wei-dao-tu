@@ -1,0 +1,15 @@
+[Unit]
+Description=知识之海 云端中转服务
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/knowledge-sea-server
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

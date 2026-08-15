@@ -1,7 +1,7 @@
 {
   "name": "the-sea-of-knowledge",
   "version": "1.0.0",
-  "description": "知识点管理软件 - The Sea of Knowledge",
+  "description": "知识之海 (The Sea of Knowledge) — 轻量级知识管理 + 思维导图工具，支持 Markdown/LaTeX 知识点、双向关联与云端同步",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

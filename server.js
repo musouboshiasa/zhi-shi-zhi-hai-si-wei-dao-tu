@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const cors = require('cors');
-const { marked } = require('marked');
 const archiver = require('archiver');
 const http = require('http');
 const https = require('https');
@@ -88,6 +87,15 @@ function saveJSON(filePath, data) {
 
 function sanitizeFilename(name) {
   return name.replace(/[<>:"/\\|?*]/g, '_').trim();
+}
+
+// Resolve a path strictly inside IMAGE_DIR, rejecting path traversal (e.g. "../").
+// Returns the absolute path, or null if the filename tries to escape IMAGE_DIR.
+function getImagePath(filename) {
+  const base = path.resolve(IMAGE_DIR);
+  const target = path.resolve(IMAGE_DIR, filename);
+  if (target !== base && !target.startsWith(base + path.sep)) return null;
+  return target;
 }
 
 // ============ Knowledge Point File Format Parser ============
@@ -257,11 +265,16 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
   function addNodeAndEdges(number, parentNum = null, relation = null, depth = 0, bwMax = 1, fwMax = 1, direction = 'forward') {
     if (depth > (direction === 'backward' ? bwMax : fwMax)) return;
 
-    // Add edge even if node is already visited (to complete cycles)
-    if (parentNum && visited.has(number)) {
-      edges.push({ from: parentNum, to: number, relation: relation || '无' });
-      return;
+    // Add a directed edge before the visited check so cycles are still linked.
+    // Arrows always point to the "后相关" (next) node, so a backward traversal
+    // means `number` (prev) points to `parentNum`.
+    if (parentNum) {
+      const edge = direction === 'backward'
+        ? { from: number, to: parentNum, relation: relation || '无' }
+        : { from: parentNum, to: number, relation: relation || '无' };
+      edges.push(edge);
     }
+
     if (visited.has(number)) return;
     visited.add(number);
 
@@ -287,14 +300,6 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
       depth: depth
     });
 
-    if (parentNum) {
-      edges.push({
-        from: parentNum,
-        to: number,
-        relation: relation || '无'
-      });
-    }
-
     if (mode === 'surrounding' || mode === 'backward' || mode === 'free') {
       for (const rel of (kp.prevRelated || [])) {
         addNodeAndEdges(rel.number, number, rel.relation, depth + 1, bwMax, fwMax, 'backward');
@@ -308,7 +313,7 @@ function getMindMapData(centerNumber, mode, forwardDepth = 1, backwardDepth = 1)
     }
   }
 
-  if (mode === 'free') {
+  if (mode === 'free' || mode === 'surrounding') {
     addNodeAndEdges(centerNumber, null, null, 0, backwardDepth, forwardDepth);
   } else {
     addNodeAndEdges(centerNumber, null, null, 0, forwardDepth, forwardDepth);
@@ -448,7 +453,7 @@ app.post('/api/knowledge', (req, res) => {
   const fileContent = generateKnowledgeFile(fileData);
   fs.writeFileSync(filePath, fileContent, 'utf-8');
   updateFileIndex();
-  syncAllReciprocal(number, safeName, fileData.prevRelated, fileData.nextRelated, [], []);
+  syncAllReciprocal(number, name, fileData.prevRelated, fileData.nextRelated, [], []);
   res.json({ success: true, number, name: safeName, filename });
 });
 
@@ -477,7 +482,7 @@ app.put('/api/knowledge/:number', (req, res) => {
 
   const fileData = {
     number: newNumber,
-    name: name || '',
+    name: newName,
     content: content !== undefined ? content : '',
     prevRelated: prevRelated || [],
     nextRelated: nextRelated || []
@@ -494,7 +499,7 @@ app.put('/api/knowledge/:number', (req, res) => {
     updateReferences(oldNumber, newNumber, newName);
   }
 
-  syncAllReciprocal(newNumber, safeName, fileData.prevRelated, fileData.nextRelated, oldPrev, oldNext);
+  syncAllReciprocal(newNumber, newName, fileData.prevRelated, fileData.nextRelated, oldPrev, oldNext);
   updateFileIndex();
   res.json({ success: true, number: newNumber, name: safeName, filename: newFilename });
 });
@@ -586,8 +591,8 @@ app.post('/api/images/upload', imageUpload.single('image'), (req, res) => {
 app.put('/api/images/:filename', (req, res) => {
   const oldFilename = decodeURIComponent(req.params.filename);
   const { number, name } = req.body;
-  const oldPath = path.join(IMAGE_DIR, oldFilename);
-  if (!fs.existsSync(oldPath)) return res.status(404).json({ error: '图片未找到' });
+  const oldPath = getImagePath(oldFilename);
+  if (!oldPath || !fs.existsSync(oldPath)) return res.status(404).json({ error: '图片未找到' });
 
   const ext = path.extname(oldFilename);
   const safeName = sanitizeFilename(name || '');
@@ -606,16 +611,16 @@ app.put('/api/images/:filename', (req, res) => {
 // Serve image files
 app.get('/api/images/file/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  const filePath = path.join(IMAGE_DIR, filename);
-  if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+  const filePath = getImagePath(filename);
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('Not found');
   res.sendFile(filePath);
 });
 
 // Delete image
 app.delete('/api/images/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  const filePath = path.join(IMAGE_DIR, filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: '图片未找到' });
+  const filePath = getImagePath(filename);
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: '图片未找到' });
   try { fs.unlinkSync(filePath); } catch (e) { return res.status(500).json({ error: '删除失败: ' + e.message }); }
   updateImageIndex();
   res.json({ success: true });
@@ -653,6 +658,9 @@ app.get('/api/cloud-config', (req, res) => {
 
 app.put('/api/cloud-config', (req, res) => {
   const config = req.body;
+  // Only persist the password when the user explicitly opts in ("记住登录信息"),
+  // so credentials are not silently written to disk in plaintext.
+  if (!config.saveCredentials) config.password = '';
   saveJSON(CLOUD_CONFIG_FILE, config);
   res.json({ success: true });
 });
@@ -694,6 +702,12 @@ app.post('/api/cloud/upload', async (req, res) => {
     });
 
     try { fs.unlinkSync(zipPath); } catch (_) { /* ignore cleanup failure */ }
+
+    if (result.status < 200 || result.status >= 300) {
+      let errMsg = 'HTTP ' + result.status;
+      try { errMsg = JSON.parse(result.body).error || errMsg; } catch (_) {}
+      return res.status(502).json({ error: '上传失败: ' + errMsg });
+    }
     res.json({ success: true, message: '上传成功' });
   } catch (err) {
     res.status(500).json({ error: '上传失败: ' + err.message });
@@ -710,6 +724,12 @@ app.post('/api/cloud/download', async (req, res) => {
 
     // Get file list
     const listResult = await cloudRequest(`${config.domain}/transfer/api/list`, { headers: authHeader });
+    if (listResult.status === 401) throw new Error('云端认证失败，请检查账号和密码');
+    if (listResult.status < 200 || listResult.status >= 300) {
+      let errMsg = 'HTTP ' + listResult.status;
+      try { errMsg = JSON.parse(listResult.body).error || errMsg; } catch (_) {}
+      throw new Error(errMsg);
+    }
     let fileList;
     try { fileList = JSON.parse(listResult.body); } catch { throw new Error('Invalid response: ' + listResult.body.substring(0, 200)); }
 
@@ -724,7 +744,16 @@ app.post('/api/cloud/download', async (req, res) => {
     // Download the file
     const downloadUrl = `${config.domain}/transfer/api/download/${encodeURIComponent(latestFile)}`;
     const dlResult = await cloudRequest(downloadUrl, { headers: authHeader, binary: true });
-    if (dlResult.status !== 200) throw new Error('Download failed: HTTP ' + dlResult.status);
+    if (dlResult.status === 401) throw new Error('云端认证失败，请检查账号和密码');
+    if (dlResult.status !== 200) {
+      let errMsg = 'HTTP ' + dlResult.status;
+      try {
+        const bodyStr = Buffer.isBuffer(dlResult.body) ? dlResult.body.toString('utf-8') : String(dlResult.body);
+        const parsed = JSON.parse(bodyStr);
+        if (parsed && parsed.error) errMsg = parsed.error;
+      } catch (_) {}
+      throw new Error('下载失败: ' + errMsg);
+    }
     const fileData = dlResult.body; // already a Buffer
 
     // Save and extract
@@ -735,6 +764,22 @@ app.post('/api/cloud/download', async (req, res) => {
     const extractDir = path.join(CLOUD_TRANSFER_DIR, '_temp_extract');
     const extract = require('extract-zip');
     await extract(zipPath, { dir: extractDir });
+
+    // Back up the current local knowledge base before overwriting, so a bad
+    // download can be rolled back.
+    const backupDir = path.join(CLOUD_TRANSFER_DIR, '本地备份');
+    ensureDir(backupDir);
+    const backupName = `本地备份_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+    const backupPath = path.join(backupDir, backupName);
+    await new Promise((resolve, reject) => {
+      const output = fs.createWriteStream(backupPath);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      output.on('close', resolve);
+      archive.on('error', reject);
+      archive.pipe(output);
+      archive.directory(KB_DIR, '知识点库');
+      archive.finalize();
+    });
 
     // Replace current KB — copy new files, then remove stale ones individually
     const tempKb = path.join(extractDir, '知识点库');

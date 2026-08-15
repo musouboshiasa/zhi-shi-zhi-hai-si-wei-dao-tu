@@ -1,5 +1,10 @@
 [
   {
+    "number": "0",
+    "name": "编号习惯",
+    "filename": "0：编号习惯.md"
+  },
+  {
     "number": "1-1-2",
     "name": "急性右心衰竭",
     "filename": "1-1-2：急性右心衰竭.md"
@@ -436,8 +441,8 @@
   },
   {
     "number": "2-13",
-    "name": "sumif/sumifs函数",
-    "filename": "2-13：sumif_sumifs函数.md"
+    "name": "求和",
+    "filename": "2-13：求和.md"
   },
   {
     "number": "2-14",
@@ -453,5 +458,145 @@
     "number": "2-16",
     "name": "if函数",
     "filename": "2-16：if函数.md"
+  },
+  {
+    "number": "2-17",
+    "name": "weekday函数",
+    "filename": "2-17：weekday函数.md"
+  },
+  {
+    "number": "2-18",
+    "name": "mod函数（取模）",
+    "filename": "2-18：mod函数（取模）.md"
+  },
+  {
+    "number": "2-19",
+    "name": "取整函数",
+    "filename": "2-19：取整函数.md"
+  },
+  {
+    "number": "2-20",
+    "name": "datedif函数",
+    "filename": "2-20：datedif函数.md"
+  },
+  {
+    "number": "2-21",
+    "name": "计数函数",
+    "filename": "2-21：计数函数.md"
+  },
+  {
+    "number": "2-22",
+    "name": "排名函数",
+    "filename": "2-22：排名函数.md"
+  },
+  {
+    "number": "2-23",
+    "name": "引用",
+    "filename": "2-23：引用.md"
+  },
+  {
+    "number": "2-24",
+    "name": "sqrt函数（开平方根）",
+    "filename": "2-24：sqrt函数（开平方根）.md"
+  },
+  {
+    "number": "2-25",
+    "name": "页眉页脚页码",
+    "filename": "2-25：页眉页脚页码.md"
+  },
+  {
+    "number": "2-26",
+    "name": "编号",
+    "filename": "2-26：编号.md"
+  },
+  {
+    "number": "2-27",
+    "name": "选择",
+    "filename": "2-27：选择.md"
+  },
+  {
+    "number": "2-28",
+    "name": "条件格式",
+    "filename": "2-28：条件格式.md"
+  },
+  {
+    "number": "2-29",
+    "name": "PPT",
+    "filename": "2-29：PPT.md"
+  },
+  {
+    "number": "2-30",
+    "name": "动画",
+    "filename": "2-30：动画.md"
+  },
+  {
+    "number": "2-31",
+    "name": "相册",
+    "filename": "2-31：相册.md"
+  },
+  {
+    "number": "2-32",
+    "name": "文本",
+    "filename": "2-32：文本.md"
+  },
+  {
+    "number": "2-33",
+    "name": "放映",
+    "filename": "2-33：放映.md"
+  },
+  {
+    "number": "2-34",
+    "name": "分割线",
+    "filename": "2-34：分割线.md"
+  },
+  {
+    "number": "2-35",
+    "name": "目录",
+    "filename": "2-35：目录.md"
+  },
+  {
+    "number": "2-36",
+    "name": "边框底纹",
+    "filename": "2-36：边框底纹.md"
+  },
+  {
+    "number": "2-37",
+    "name": "数据验证",
+    "filename": "2-37：数据验证.md"
+  },
+  {
+    "number": "2-38",
+    "name": "从大纲导入",
+    "filename": "2-38：从大纲导入.md"
+  },
+  {
+    "number": "2-39",
+    "name": "幻灯片母版",
+    "filename": "2-39：幻灯片母版.md"
+  },
+  {
+    "number": "2-40",
+    "name": "选择性粘贴",
+    "filename": "2-40：选择性粘贴.md"
+  },
+  {
+    "number": "2-41",
+    "name": "大纲视图",
+    "filename": "2-41：大纲视图.md"
+  },
+  {
+    "number": "2-42",
+    "name": "脚注尾注",
+    "filename": "2-42：脚注尾注.md"
+  },
+  {
+    "number": "2-43",
+    "name": "域",
+    "filename": "2-43：域.md"
+  },
+  {
+    "number": "2-44",
+    "name": "StyleRef域",
+    "filename": "2-44：StyleRef域.md"
   }
 ]

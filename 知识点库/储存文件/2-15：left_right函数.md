@@ -5,7 +5,7 @@ left/right函数
 （（正文区））
 - left函数从最左边开始取，right函数从最右边开始取  
 - 参数  
-![left函数参数](/api/images/file/2-5%EF%BC%9Aleft%E5%87%BD%E6%95%B0%E5%8F%82%E6%95%B0.png)  
+![left函数参数](api/images/file/2-5%EF%BC%9Aleft%E5%87%BD%E6%95%B0%E5%8F%82%E6%95%B0.png)  
 - 注意返回结果为字符串！！！
 （（前相关区））
 - 2-8：包括：EXCEL

@@ -1,7 +1,7 @@
 // ========== Mind Map Renderer ==========
 
 class MindMapRenderer {
-  constructor(canvasId, containerId, data) {
+  constructor(canvasId, containerId, data, refreshRate = 60) {
     this.canvas = document.getElementById(canvasId);
     this.container = document.getElementById(containerId);
     this.data = data;
@@ -25,6 +25,9 @@ class MindMapRenderer {
     this.dragOffsetX = 0;
     this.dragOffsetY = 0;
     this.penColor = null;
+    this.refreshRate = Math.max(1, parseInt(refreshRate, 10) || 60);
+    this._lastRender = 0;
+    this._renderTimer = null;
 
     // Node layout
     this.nodes = [];
@@ -40,8 +43,18 @@ class MindMapRenderer {
   }
 
   resize() {
-    this.canvas.width = this.container.clientWidth;
-    this.canvas.height = this.container.clientHeight;
+    // Render at device-pixel resolution so the mind map stays crisp on
+    // high-DPI / retina / Windows-scaled displays (fixes blurry output).
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = dpr;
+    this.width = this.container.clientWidth;
+    this.height = this.container.clientHeight;
+    this.canvas.width = Math.round(this.width * dpr);
+    this.canvas.height = Math.round(this.height * dpr);
+    this.canvas.style.width = this.width + 'px';
+    this.canvas.style.height = this.height + 'px';
+    // Base transform: all drawing uses logical (CSS px) coordinates.
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   bindEvents() {
@@ -96,54 +109,45 @@ class MindMapRenderer {
     const edges = this.data.edges;
     const centerNumber = this.data.centerNumber;
 
-    // Build adjacency
-    const adj = {};
-    const inDegree = {};
-    nodes.forEach(n => { adj[n.number] = []; inDegree[n.number] = 0; });
+    // Directed adjacency from edges (arrow: from -> to, i.e. `to` is `from`'s 后相关).
+    const nextOf = {};
+    const prevOf = {};
+    nodes.forEach(n => { nextOf[n.number] = []; prevOf[n.number] = []; });
     edges.forEach(e => {
-      if (!adj[e.from]) adj[e.from] = [];
-      if (!adj[e.to]) adj[e.to] = [];
-      adj[e.from].push(e.to);
-      inDegree[e.to] = (inDegree[e.to] || 0) + 1;
+      (nextOf[e.from] = nextOf[e.from] || []).push(e.to);
+      (prevOf[e.to] = prevOf[e.to] || []).push(e.from);
     });
 
-    // Find roots (no incoming edges, or the center node)
-    let roots = nodes.filter(n => inDegree[n.number] === 0).map(n => n.number);
-    if (roots.length === 0) roots = [centerNumber];
-
-    // BFS layered layout
-    const layers = {};
-    const visited = new Set();
-    let queue = roots.map(r => ({ id: r, layer: 0 }));
-
-    // If center is not in roots, add it
-    if (!roots.includes(centerNumber)) {
-      queue = [{ id: centerNumber, layer: 0 }];
-    }
-
+    // BFS outward from the center node.
+    // Next (后相关) nodes go to positive layers; prev (前相关) nodes go to negative layers,
+    // so the selected node is always centered.
+    const layerOf = {};
+    const queue = [{ id: centerNumber, layer: 0 }];
+    layerOf[centerNumber] = 0;
     while (queue.length > 0) {
       const { id, layer } = queue.shift();
-      if (visited.has(id)) continue;
-      visited.add(id);
-
-      if (!layers[layer]) layers[layer] = [];
-      layers[layer].push(id);
-
-      for (const neighbor of (adj[id] || [])) {
-        if (!visited.has(neighbor)) {
-          queue.push({ id: neighbor, layer: layer + 1 });
+      for (const nxt of nextOf[id] || []) {
+        if (layerOf[nxt] === undefined) {
+          layerOf[nxt] = layer + 1;
+          queue.push({ id: nxt, layer: layer + 1 });
+        }
+      }
+      for (const prv of prevOf[id] || []) {
+        if (layerOf[prv] === undefined) {
+          layerOf[prv] = layer - 1;
+          queue.push({ id: prv, layer: layer - 1 });
         }
       }
     }
 
-    // Also handle backward nodes (prevRelated)
-    // Find nodes that point TO the center but aren't in adj
-    const backwardLayers = {};
-    nodes.forEach(n => {
-      if (visited.has(n.number)) return;
-      // Add to negative layers
-      backwardLayers[-1] = backwardLayers[-1] || [];
-      backwardLayers[-1].push(n.number);
+    // Defensive: any node not reached by BFS is placed at the center layer.
+    nodes.forEach(n => { if (layerOf[n.number] === undefined) layerOf[n.number] = 0; });
+
+    // Group nodes by layer.
+    const layerGroups = {};
+    Object.keys(layerOf).forEach(id => {
+      const layer = layerOf[id];
+      (layerGroups[layer] = layerGroups[layer] || []).push(id);
     });
 
     // Assign positions
@@ -155,14 +159,13 @@ class MindMapRenderer {
     const startY = 80;
 
     const positions = {};
-    const allLayers = { ...backwardLayers, ...layers };
-    const layerKeys = Object.keys(allLayers).map(Number).sort((a, b) => a - b);
+    const layerKeys = Object.keys(layerGroups).map(Number).sort((a, b) => a - b);
 
     let currentX = startX;
     for (const layer of layerKeys) {
-      const ids = allLayers[layer];
-      const totalHeight = ids.length * (nodeHeight + vGap);
-      let currentY = startY + Math.max(0, (this.canvas.height - totalHeight) / 2 - startY);
+      const ids = layerGroups[layer];
+      const totalHeight = ids.length * (nodeHeight + vGap) - vGap;
+      let currentY = startY + Math.max(0, (this.height - totalHeight) / 2 - startY);
 
       ids.forEach(id => {
         positions[id] = { x: currentX, y: currentY, w: nodeWidth, h: nodeHeight };
@@ -173,7 +176,6 @@ class MindMapRenderer {
     }
 
     this.positions = positions;
-    this.adj = adj;
 
     // Calculate total bounds
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -188,7 +190,7 @@ class MindMapRenderer {
 
   // ---- Rendering ----
   render() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.clearRect(0, 0, this.width, this.height);
 
     // Only calculate layout once; after that positions are mutable (drag)
     if (!this._layoutDone) {
@@ -454,7 +456,7 @@ class MindMapRenderer {
       pos.x = this.dragNodeStartX + dx;
       pos.y = this.dragNodeStartY + dy;
       this.hasMoved = true;
-      this.render();
+      this.throttledRender();
       return;
     }
 
@@ -471,7 +473,7 @@ class MindMapRenderer {
     this.offsetX = this.dragOffsetX + (e.clientX - this.dragStartX);
     this.offsetY = this.dragOffsetY + (e.clientY - this.dragStartY);
     this.hasMoved = true;
-    this.render();
+    this.throttledRender();
   }
 
   onMouseUp(e) {
@@ -510,7 +512,7 @@ class MindMapRenderer {
     this.offsetX = mouseX - (mouseX - this.offsetX) * (newScale / this.scale);
     this.offsetY = mouseY - (mouseY - this.offsetY) * (newScale / this.scale);
     this.scale = newScale;
-    this.render();
+    this.throttledRender();
   }
 
   onClick(e) {
@@ -558,6 +560,27 @@ class MindMapRenderer {
     this.penColor = color;
   }
 
+  setRefreshRate(rate) {
+    this.refreshRate = Math.max(1, parseInt(rate, 10) || 60);
+  }
+
+  // Render at most `refreshRate` frames per second. Used during continuous
+  // interactions (drag/pan/zoom) to keep CPU usage bounded.
+  throttledRender() {
+    const now = performance.now();
+    const minInterval = 1000 / this.refreshRate;
+    if (now - this._lastRender >= minInterval) {
+      this._lastRender = now;
+      this.render();
+    } else if (!this._renderTimer) {
+      this._renderTimer = setTimeout(() => {
+        this._renderTimer = null;
+        this._lastRender = performance.now();
+        this.render();
+      }, minInterval - (now - this._lastRender));
+    }
+  }
+
   zoomIn() {
     this.scale = Math.min(3.0, this.scale * 1.2);
   }
@@ -573,6 +596,7 @@ class MindMapRenderer {
   }
 
   destroy() {
+    if (this._renderTimer) { clearTimeout(this._renderTimer); this._renderTimer = null; }
     this.canvas.style.cursor = 'default';
     this.hideBubble();
     this.nodeColors = {};

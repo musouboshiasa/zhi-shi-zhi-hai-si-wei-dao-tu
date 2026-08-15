@@ -435,7 +435,12 @@ async function openMindMap(number, mode) {
       `/api/knowledge/${encodeURIComponent(number)}/mindmap?mode=${mode}&forwardDepth=${forwardDepth}&backwardDepth=${backwardDepth}`
     );
     if (mindMap) mindMap.destroy();
-    mindMap = new MindMapRenderer('mindmap-canvas', 'mindmap-canvas-container', data);
+    let refreshRate = 60;
+    try {
+      const settings = await API.get('/api/settings');
+      refreshRate = settings.refreshRate || 60;
+    } catch (_) { /* use default */ }
+    mindMap = new MindMapRenderer('mindmap-canvas', 'mindmap-canvas-container', data, refreshRate);
     mindMap.render();
   } catch (e) {
     showToast('加载思维导图失败: ' + e.message);
@@ -731,6 +736,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mindMap) mindMap.setPenColor(activePenColor);
   }
 
+  // Create a new knowledge point directly from the mind map view
+  document.getElementById('btn-mindmap-new').addEventListener('click', () => {
+    if (mindMap) { mindMap.destroy(); mindMap = null; }
+    document.getElementById('kp-page').dataset.currentNumber = '';
+    document.getElementById('edit-number').value = '';
+    document.getElementById('edit-name').value = '';
+    document.getElementById('edit-content').value = '';
+    document.getElementById('edit-prev-related').innerHTML = '';
+    document.getElementById('edit-next-related').innerHTML = '';
+    document.getElementById('edit-preview').innerHTML = '';
+    PageManager.show('kp-edit-page');
+  });
+
   // Mind map zoom
   document.getElementById('btn-zoom-in').addEventListener('click', () => {
     if (mindMap) { mindMap.zoomIn(); mindMap.render(); }
@@ -888,7 +906,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('btn-exit').addEventListener('click', () => {
-    showToast('感谢使用 The Sea of Knowledge！请关闭浏览器标签页退出。');
+    // Browsers usually only allow closing a tab the script itself opened, so
+    // attempt window.close() and also tell the user how to exit manually.
+    window.close();
+    showToast('感谢使用 The Sea of Knowledge！如页面未关闭，请手动关闭浏览器标签页。');
   });
 
   // ---- Cloud Actions ----

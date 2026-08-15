@@ -38,5 +38,20 @@
     "number": "2-6",
     "name": "if函数参数",
     "filename": "2-6：if函数参数.png"
+  },
+  {
+    "number": "2-7",
+    "name": "if函数嵌套",
+    "filename": "2-7：if函数嵌套.png"
+  },
+  {
+    "number": "2-8",
+    "name": "datedif函数参数",
+    "filename": "2-8：datedif函数参数.png"
+  },
+  {
+    "number": "2-9",
+    "name": "rank函数参数",
+    "filename": "2-9：rank函数参数.png"
   }
 ]
