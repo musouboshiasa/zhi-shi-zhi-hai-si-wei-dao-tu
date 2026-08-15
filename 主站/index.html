@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无双星晨的小站</title>
+<meta name="description" content="无双星晨的个人小站 — 知识之海 & 个人网盘">
+<style>
+  :root {
+    --bg-1: #0b1026;
+    --bg-2: #1a1f4d;
+    --bg-3: #2a1e5c;
+    --accent: #7c9cff;
+    --accent-2: #a5b8ff;
+    --text: #eef1ff;
+    --text-dim: #a8b1d6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: var(--text);
+    background: linear-gradient(160deg, var(--bg-1) 0%, var(--bg-2) 45%, var(--bg-3) 100%);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 星空背景 */
+  .stars {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .star {
+    position: absolute;
+    background: #fff;
+    border-radius: 50%;
+    opacity: 0.7;
+    animation: twinkle 3s ease-in-out infinite;
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 0.9; transform: scale(1.2); }
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--accent-2);
+    border: 1px solid rgba(124,156,255,0.4);
+    border-radius: 999px;
+    padding: 6px 16px;
+    margin-bottom: 24px;
+    backdrop-filter: blur(4px);
+  }
+
+  h1 {
+    font-size: clamp(34px, 6vw, 56px);
+    font-weight: 800;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    text-shadow: 0 4px 30px rgba(124,156,255,0.45);
+  }
+  .subtitle {
+    font-size: clamp(15px, 2.2vw, 18px);
+    color: var(--text-dim);
+    margin-bottom: 48px;
+    letter-spacing: 1px;
+  }
+
+  .entries {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    justify-content: center;
+    width: 100%;
+    max-width: 720px;
+  }
+  .entry {
+    flex: 1 1 240px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 36px 24px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    text-decoration: none;
+    color: var(--text);
+    transition: transform 0.25s ease, background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    backdrop-filter: blur(8px);
+  }
+  .entry:hover {
+    transform: translateY(-6px);
+    background: rgba(255,255,255,0.12);
+    border-color: var(--accent);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+  }
+  .entry .icon {
+    font-size: 52px;
+    line-height: 1;
+  }
+  .entry .name {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .entry .desc {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  footer {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 20px 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.9;
+  }
+  footer a {
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  footer a:hover { color: var(--accent-2); }
+  footer .sep { margin: 0 8px; opacity: 0.5; }
+
+  @media (max-width: 560px) {
+    .entries { flex-direction: column; align-items: center; }
+    .entry { width: 100%; max-width: 340px; }
+  }
+</style>
+</head>
+<body>
+  <div class="stars" id="stars"></div>
+
+  <div class="wrap">
+    <span class="badge">WELCOME · 欢迎</span>
+    <h1>无双星晨的小站</h1>
+    <p class="subtitle">记录知识，收藏时光</p>
+
+    <div class="entries">
+      <a class="entry" href="/ruanjian/">
+        <span class="icon">🌊</span>
+        <span class="name">知识之海</span>
+        <span class="desc">知识点管理 · 思维导图<br>进入我的知识库</span>
+      </a>
+      <a class="entry" href="/drive/">
+        <span class="icon">☁️</span>
+        <span class="name">个人网盘</span>
+        <span class="desc">文件存储 · 随时访问<br>进入我的云盘</span>
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <div>© 2026 无双星晨的小站 · 保留所有权利</div>
+    <div>
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">辽ICP备2026015611号-1</a>
+      <span class="sep">|</span>
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">【第二个备案号待填】</a>
+    </div>
+  </footer>
+
+  <script>
+    // 生成星空背景
+    (function () {
+      var c = document.getElementById('stars');
+      var n = window.innerWidth < 560 ? 40 : 90;
+      for (var i = 0; i < n; i++) {
+        var s = document.createElement('span');
+        s.className = 'star';
+        var size = Math.random() * 2.5 + 1;
+        s.style.width = size + 'px';
+        s.style.height = size + 'px';
+        s.style.left = (Math.random() * 100) + '%';
+        s.style.top = (Math.random() * 100) + '%';
+        s.style.animationDelay = (Math.random() * 3) + 's';
+        s.style.animationDuration = (2.5 + Math.random() * 3) + 's';
+        c.appendChild(s);
+      }
+    })();
+  </script>
+</body>
+</html>
